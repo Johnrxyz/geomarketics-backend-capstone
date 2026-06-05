@@ -6,3 +6,5 @@ django-filter>=24.0
 Pillow>=10.0
 python-decouple>=3.8
 python-dotenv>=1.0
+psycopg2-binary>=2.9
+pypdf>=4.0

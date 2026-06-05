@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import CommodityCategory, Commodity, PriceReport, PriceEntry
+from .models import CommodityCategory, Commodity, PriceReport, PriceEntry, PriceSnapshot
 
 
 class CommodityCategorySerializer(serializers.ModelSerializer):
@@ -62,3 +62,20 @@ class PriceReportListSerializer(serializers.ModelSerializer):
 
     def get_entry_count(self, obj):
         return obj.entries.count()
+
+
+class PriceSnapshotSerializer(serializers.ModelSerializer):
+    market_name = serializers.CharField(source='market.name', read_only=True)
+    commodity_name = serializers.CharField(source='commodity.name', read_only=True)
+    commodity_unit = serializers.CharField(source='commodity.unit', read_only=True)
+    category_name = serializers.CharField(source='commodity.category.name', read_only=True)
+
+    class Meta:
+        model = PriceSnapshot
+        fields = [
+            'id', 'market', 'market_name', 'commodity', 'commodity_name',
+            'commodity_unit', 'category_name', 'source_document', 'survey_date',
+            'price_min', 'price_max', 'average_price', 'prevailing_price',
+            'data_quality', 'created_at'
+        ]
+

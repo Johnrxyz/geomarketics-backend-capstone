@@ -7,7 +7,7 @@ from apps.vendors.views import MarketSectionViewSet, StallViewSet, VendorViewSet
 from apps.complaints.views import ComplaintViewSet
 from apps.documents.views import DocumentViewSet
 from apps.sanitation.views import SanitationSessionViewSet, SanitationRecordViewSet
-from apps.prices.views import CommodityCategoryViewSet, CommodityViewSet, PriceReportViewSet
+from apps.prices.views import CommodityCategoryViewSet, CommodityViewSet, PriceReportViewSet, PriceSnapshotViewSet
 from apps.analytics.views import DashboardView, ReportsView, PublicStatsView
 from apps.notifications.views import NotificationViewSet
 
@@ -23,6 +23,7 @@ router.register(r'sanitation/records', SanitationRecordViewSet, basename='sanita
 router.register(r'prices/categories', CommodityCategoryViewSet, basename='commodity-category')
 router.register(r'prices/commodities', CommodityViewSet, basename='commodity')
 router.register(r'prices/reports', PriceReportViewSet, basename='price-report')
+router.register(r'prices/snapshots', PriceSnapshotViewSet, basename='price-snapshot')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [

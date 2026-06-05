@@ -8,7 +8,7 @@ from datetime import timedelta, date
 from apps.vendors.models import MarketSection, Stall, Vendor
 from apps.complaints.models import Complaint
 from apps.documents.models import Document
-from apps.prices.models import PriceReport, PriceEntry
+from apps.prices.models import PriceReport, PriceEntry, PriceSnapshot
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -62,21 +62,21 @@ class DashboardView(APIView):
             'created_at': c.created_at.isoformat(),
         } for c in recent_complaints]
 
-        # Price trend (last 6 weeks of reports)
-        reports = PriceReport.objects.filter(is_published=True).order_by('-report_date')[:6]
+        # Price trend (last 6 dates of snapshots)
+        dates = PriceSnapshot.objects.values_list('survey_date', flat=True).distinct().order_by('-survey_date')[:6]
         price_trend = []
-        for r in reversed(list(reports)):
-            veg_avg = PriceEntry.objects.filter(
-                report=r, commodity__category__name__icontains='Vegetable'
+        for d in reversed(list(dates)):
+            veg_avg = PriceSnapshot.objects.filter(
+                survey_date=d, commodity__category__name__icontains='Vegetable'
             ).aggregate(avg=Avg('average_price'))['avg']
-            meat_avg = PriceEntry.objects.filter(
-                report=r, commodity__category__name__icontains='Meat'
+            meat_avg = PriceSnapshot.objects.filter(
+                survey_date=d, commodity__category__name__icontains='Meat'
             ).aggregate(avg=Avg('average_price'))['avg']
-            fish_avg = PriceEntry.objects.filter(
-                report=r, commodity__category__name__icontains='Fish'
+            fish_avg = PriceSnapshot.objects.filter(
+                survey_date=d, commodity__category__name__icontains='Fish'
             ).aggregate(avg=Avg('average_price'))['avg']
             price_trend.append({
-                'date': r.report_date.strftime('%b %d'),
+                'date': d.strftime('%b %d'),
                 'vegetables': round(float(veg_avg), 2) if veg_avg else None,
                 'meat': round(float(meat_avg), 2) if meat_avg else None,
                 'fish': round(float(fish_avg), 2) if fish_avg else None,
@@ -210,20 +210,29 @@ class PublicStatsView(APIView):
                 'status': stall.status,
             })
 
-        # Public price data (latest report)
-        latest_report = PriceReport.objects.filter(is_published=True).order_by('-report_date').first()
+        # Public price data (latest snapshot date)
+        latest_date = PriceSnapshot.objects.values_list('survey_date', flat=True).order_by('-survey_date').first()
         price_categories = []
-        if latest_report:
-            from apps.prices.models import CommodityCategory
+        if latest_date:
+            from apps.prices.models import CommodityCategory, Commodity
             for cat in CommodityCategory.objects.all()[:4]:
-                entries = PriceEntry.objects.filter(
-                    report=latest_report,
-                    commodity__category=cat
-                ).select_related('commodity')[:3]
-                price_categories.append({
-                    'category': cat.name,
-                    'items': [{'name': e.commodity.name, 'price': float(e.average_price or 0), 'unit': e.commodity.unit} for e in entries]
-                })
+                commodities = Commodity.objects.filter(
+                    category=cat,
+                    pricesnapshot__survey_date=latest_date
+                ).distinct()[:3]
+                
+                items = []
+                for c in commodities:
+                    avg = PriceSnapshot.objects.filter(
+                        survey_date=latest_date, commodity=c
+                    ).aggregate(avg=Avg('average_price'))['avg']
+                    items.append({'name': c.name, 'price': float(avg or 0), 'unit': c.unit})
+                
+                if items:
+                    price_categories.append({
+                        'category': cat.name,
+                        'items': items
+                    })
 
         return Response({
             'stats': {
