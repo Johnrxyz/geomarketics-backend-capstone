@@ -1,5 +1,9 @@
-import cv2
-import numpy as np
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 def validate_image_quality(file_stream):
     """
@@ -8,6 +12,9 @@ def validate_image_quality(file_stream):
     """
     warnings = []
     
+    if not CV2_AVAILABLE:
+        return warnings
+        
     try:
         # file_stream is an InMemoryUploadedFile or TemporaryUploadedFile
         # Rewind stream before reading
