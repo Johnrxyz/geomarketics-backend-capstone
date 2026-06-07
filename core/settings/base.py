@@ -1,9 +1,13 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+import dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+env_file = BASE_DIR / '.env'
+if env_file.exists():
+    dotenv.load_dotenv(env_file)
 
 def env(key, default=None, cast=str):
     val = os.environ.get(key, default)
@@ -15,6 +19,7 @@ def env(key, default=None, cast=str):
 
 
 SECRET_KEY = env('SECRET_KEY', 'django-insecure-lcpublicmarket-dev-secret-key-change-in-production')
+GEMINI_API_KEY = env('GEMINI_API_KEY')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -125,3 +130,9 @@ SIMPLE_JWT = {
 # Source document storage
 # -------------------------------------------------------
 SOURCE_DOCUMENTS_DIR = MEDIA_ROOT / 'source_documents'
+
+# -------------------------------------------------------
+# OCR Provider Settings
+# -------------------------------------------------------
+OCR_PROVIDER = env('OCR_PROVIDER', 'GEMINI') # Defaults to GEMINI per revision
+GEMINI_API_KEY = env('GEMINI_API_KEY', '')

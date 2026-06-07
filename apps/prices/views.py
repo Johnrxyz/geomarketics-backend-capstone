@@ -1,11 +1,18 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import CommodityCategory, Commodity, PriceReport, PriceEntry
 from .serializers import (CommodityCategorySerializer, CommoditySerializer,
                           PriceReportSerializer, PriceReportListSerializer, PriceEntrySerializer)
+
+
+class LargeResultsSetPagination(PageNumberPagination):
+    page_size = 1000
+    page_size_query_param = 'page_size'
+    max_page_size = 5000
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -107,6 +114,7 @@ class PriceSnapshotViewSet(viewsets.ReadOnlyModelViewSet):
     from .serializers import PriceSnapshotSerializer
     serializer_class = PriceSnapshotSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = LargeResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['market', 'commodity', 'commodity__category', 'survey_date', 'data_quality']
     search_fields = ['market__name', 'commodity__name']

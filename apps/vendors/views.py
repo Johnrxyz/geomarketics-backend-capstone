@@ -78,3 +78,10 @@ class VendorViewSet(viewsets.ModelViewSet):
             'session', 'check_item'
         ).order_by('-session__date')[:50]
         return Response(SanitationRecordSerializer(records, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='compliance-profile')
+    def compliance_profile(self, request, pk=None):
+        from apps.documents.services.compliance import VendorComplianceService
+        vendor = self.get_object()
+        compliance_data = VendorComplianceService.evaluate_vendor(vendor)
+        return Response(compliance_data)
