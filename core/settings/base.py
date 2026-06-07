@@ -29,6 +29,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     # Third-party
+    'cloudinary_storage',
+    'cloudinary',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
@@ -136,3 +138,32 @@ SOURCE_DOCUMENTS_DIR = MEDIA_ROOT / 'source_documents'
 # -------------------------------------------------------
 OCR_PROVIDER = env('OCR_PROVIDER', 'GEMINI') # Defaults to GEMINI per revision
 GEMINI_API_KEY = env('GEMINI_API_KEY', '')
+
+# -------------------------------------------------------
+# Cloudinary Settings
+# -------------------------------------------------------
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': env('CLOUDINARY_CLOUD_NAME'),
+    'API_KEY': env('CLOUDINARY_API_KEY'),
+    'API_SECRET': env('CLOUDINARY_API_SECRET'),
+}
+
+# Use Cloudinary for media storage if keys are provided, else fallback to local
+if env('CLOUDINARY_CLOUD_NAME') and env('CLOUDINARY_API_KEY') and env('CLOUDINARY_API_SECRET'):
+    STORAGES = {
+        "default": {
+            "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }

@@ -60,8 +60,9 @@ class Complaint(models.Model):
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER)
     subject = models.CharField(max_length=300)
     description = models.TextField()
+    evidence_file = models.FileField(upload_to='complaints/', null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
-    admin_notes = models.TextField(blank=True)
+    resolution_notes = models.TextField(blank=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     resolved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -42,7 +42,7 @@ class StallViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
+            return [permissions.AllowAny()]
         return [IsAdminRole()]
 
 

@@ -15,8 +15,8 @@ class ComplaintSerializer(serializers.ModelSerializer):
         fields = ['id', 'complaint_number', 'complainant', 'complainant_name',
                   'complainant_contact', 'complainant_display', 'vendor', 'vendor_name',
                   'stall', 'stall_number', 'category', 'category_display',
-                  'subject', 'description', 'status', 'status_display',
-                  'admin_notes', 'resolved_at', 'resolved_by', 'created_at', 'updated_at']
+                  'subject', 'description', 'evidence_file', 'status', 'status_display',
+                  'resolution_notes', 'resolved_at', 'resolved_by', 'created_at', 'updated_at']
         read_only_fields = ['id', 'complaint_number', 'created_at', 'updated_at']
 
     def get_vendor_name(self, obj):
@@ -35,4 +35,4 @@ class ComplaintCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Complaint
         fields = ['vendor', 'stall', 'category', 'subject', 'description',
-                  'complainant_name', 'complainant_contact']
+                  'evidence_file', 'complainant_name', 'complainant_contact']
