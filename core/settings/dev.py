@@ -1,7 +1,7 @@
 from .base import *  # noqa
 
 DEBUG = True
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = env('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 # SQLite — fast local dev, no PostgreSQL install required
 DATABASES = {
@@ -14,4 +14,4 @@ DATABASES = {
     }
 }
 
-CORS_ALLOWED_ORIGINS = ['http://localhost:3000']
+CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
