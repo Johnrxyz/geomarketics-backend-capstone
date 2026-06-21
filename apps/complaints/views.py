@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.utils import timezone
-from .models import Complaint
-from .serializers import ComplaintSerializer, ComplaintCreateSerializer
+from .models import Complaint, Blotter
+from .serializers import ComplaintSerializer, ComplaintCreateSerializer, BlotterSerializer
 from apps.notifications.models import Notification
 from django.contrib.auth import get_user_model
 
@@ -129,3 +129,48 @@ class ComplaintViewSet(viewsets.ModelViewSet):
             'resolved': qs.filter(status='resolved').count(),
             'dismissed': qs.filter(status='dismissed').count(),
         })
+
+    @action(detail=True, methods=['post'], url_path='escalate')
+    def escalate(self, request, pk=None):
+        if request.user.role != 'admin':
+            return Response({'detail': 'Admin only.'}, status=status.HTTP_403_FORBIDDEN)
+        complaint = self.get_object()
+        if hasattr(complaint, 'blotter') and complaint.blotter:
+            return Response({'detail': 'Already escalated.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Build complainant name
+        c_name = complaint.complainant_name
+        if not c_name and complaint.complainant:
+            c_name = complaint.complainant.get_full_name() or complaint.complainant.username
+            
+        blotter = Blotter.objects.create(
+            complaint=complaint,
+            incident_date=complaint.created_at,
+            recorded_by=request.user,
+            vendor=complaint.vendor,
+            complainant_name=c_name,
+            incident_details=complaint.description,
+            status='open'
+        )
+        # Import inside to avoid circular import if serializers get messy, but BlotterSerializer is at top
+        return Response(BlotterSerializer(blotter).data, status=status.HTTP_201_CREATED)
+
+
+class BlotterViewSet(viewsets.ModelViewSet):
+    serializer_class = BlotterSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status', 'vendor']
+    search_fields = ['complainant_name', 'incident_details', 'action_taken', 'vendor__first_name', 'vendor__last_name']
+    ordering_fields = ['incident_date', 'created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Blotter.objects.select_related('vendor', 'recorded_by').all()
+        if getattr(user, 'role', '') == 'vendor' and hasattr(user, 'vendor_profile'):
+            return qs.filter(vendor=user.vendor_profile)
+        return qs
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAdminRole()]
+        return [permissions.IsAuthenticated()]

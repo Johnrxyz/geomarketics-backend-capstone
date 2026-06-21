@@ -39,3 +39,43 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.action} {self.entity_type} at {self.created_at}"
+
+
+class AIRiskProfile(models.Model):
+    RISK_LOW = 'low'
+    RISK_MEDIUM = 'medium'
+    RISK_HIGH = 'high'
+    RISK_CHOICES = [
+        (RISK_LOW, 'Low Risk'),
+        (RISK_MEDIUM, 'Medium Risk'),
+        (RISK_HIGH, 'High Risk'),
+    ]
+
+    vendor = models.OneToOneField('vendors.Vendor', on_delete=models.CASCADE, related_name='risk_profile')
+    risk_score = models.IntegerField(default=0)
+    risk_level = models.CharField(max_length=20, choices=RISK_CHOICES, default=RISK_LOW)
+    last_assessment_date = models.DateTimeField(auto_now=True)
+    assessment_details = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ['-risk_score']
+
+    def __str__(self):
+        return f"{self.vendor} - {self.risk_level} ({self.risk_score})"
+
+
+class AccomplishmentReport(models.Model):
+    generated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='generated_reports')
+    report_period_start = models.DateField()
+    report_period_end = models.DateField()
+    title = models.CharField(max_length=255)
+    summary = models.TextField()
+    data_snapshot = models.JSONField(default=dict)
+    file_url = models.FileField(upload_to='reports/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title

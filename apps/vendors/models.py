@@ -10,6 +10,9 @@ class MarketSection(models.Model):
 
     class Meta:
         ordering = ['code']
+        indexes = [
+            models.Index(fields=['code'], name='idx_section_code'),
+        ]
 
     def __str__(self):
         return f"Section {self.code} - {self.name}"
@@ -48,6 +51,9 @@ class Stall(models.Model):
 
     class Meta:
         ordering = ['stall_number']
+        indexes = [
+            models.Index(fields=['section', 'status'], name='idx_stall_section_status'),
+        ]
 
     def __str__(self):
         return self.stall_number

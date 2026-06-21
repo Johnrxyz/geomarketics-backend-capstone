@@ -86,3 +86,23 @@ class Complaint(models.Model):
             num = (last.id + 1) if last else 1
             self.complaint_number = f"CMP-{num:03d}"
         super().save(*args, **kwargs)
+
+
+class Blotter(models.Model):
+    complaint = models.OneToOneField(
+        'Complaint', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='blotter')
+    incident_date = models.DateTimeField()
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='recorded_blotters')
+    vendor = models.ForeignKey('vendors.Vendor', on_delete=models.SET_NULL, null=True, blank=True, related_name='blotters')
+    complainant_name = models.CharField(max_length=200, blank=True)
+    incident_details = models.TextField()
+    action_taken = models.TextField(blank=True)
+    status = models.CharField(max_length=50, default='open')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-incident_date']
+
+    def __str__(self):
+        return f"Blotter on {self.incident_date.date()} - {self.vendor or self.complainant_name}"

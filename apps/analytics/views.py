@@ -1,6 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import permissions
+from rest_framework import permissions, viewsets
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Count, Q, Avg
 from django.utils import timezone
 from datetime import timedelta, date
@@ -8,7 +10,7 @@ from datetime import timedelta, date
 from apps.vendors.models import MarketSection, Stall, Vendor
 from apps.complaints.models import Complaint
 from apps.documents.models import Document
-from apps.prices.models import PriceReport, PriceEntry, PriceSnapshot
+from apps.prices.models import PriceSnapshot
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -107,6 +109,77 @@ class DashboardView(APIView):
         })
 
 
+def build_report_snapshot(section_id=None, date_from=None, date_to=None):
+    stall_qs = Stall.objects.all()
+    complaint_qs = Complaint.objects.all()
+    vendor_qs = Vendor.objects.all()
+
+    if section_id:
+        stall_qs = stall_qs.filter(section_id=section_id)
+        complaint_qs = complaint_qs.filter(stall__section_id=section_id)
+        vendor_qs = vendor_qs.filter(stall__section_id=section_id)
+
+    if date_from:
+        complaint_qs = complaint_qs.filter(created_at__date__gte=date_from)
+    if date_to:
+        complaint_qs = complaint_qs.filter(created_at__date__lte=date_to)
+
+    total = stall_qs.count()
+    occupied = stall_qs.filter(status='occupied').count()
+    vacant = stall_qs.filter(status='vacant').count()
+    reserved = stall_qs.filter(status='reserved').count()
+    flagged = stall_qs.filter(status='flagged').count()
+
+    sections = MarketSection.objects.annotate(
+        total=Count('stalls'),
+        occupied=Count('stalls', filter=Q(stalls__status='occupied')),
+        vacant=Count('stalls', filter=Q(stalls__status='vacant')),
+        reserved=Count('stalls', filter=Q(stalls__status='reserved')),
+    ).values('code', 'name', 'total', 'occupied', 'vacant', 'reserved')
+
+    section_report = []
+    for s in sections:
+        rate = round((s['occupied'] / s['total'] * 100), 1) if s['total'] > 0 else 0
+        section_report.append({**s, 'occupancy_rate': rate})
+
+    # Complaint trend (last 6 months)
+    complaint_trend = []
+    today = date.today()
+    for i in range(5, -1, -1):
+        month_start = (today.replace(day=1) - timedelta(days=i*28)).replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1)
+        count = Complaint.objects.filter(
+            created_at__date__gte=month_start,
+            created_at__date__lt=month_end
+        ).count()
+        complaint_trend.append({
+            'month': month_start.strftime('%b %Y'),
+            'count': count,
+        })
+
+    return {
+        'occupancy': {
+            'total': total,
+            'occupied': occupied,
+            'vacant': vacant,
+            'reserved': reserved,
+            'flagged': flagged,
+            'rate': round((occupied / total * 100), 1) if total > 0 else 0,
+        },
+        'section_report': section_report,
+        'complaint_trend': complaint_trend,
+        'complaint_summary': {
+            'total': complaint_qs.count(),
+            'open': complaint_qs.filter(status='open').count(),
+            'reviewing': complaint_qs.filter(status='reviewing').count(),
+            'resolved': complaint_qs.filter(status='resolved').count(),
+        },
+        'vendor_compliance': {
+            'avg_rate': round(float(vendor_qs.aggregate(avg=Avg('compliance_rate'))['avg'] or 0), 1),
+            'below_70': vendor_qs.filter(compliance_rate__lt=70).count(),
+        }
+    }
+
 class ReportsView(APIView):
     permission_classes = [IsAdminRole]
 
@@ -114,53 +187,8 @@ class ReportsView(APIView):
         section_id = request.query_params.get('section')
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
+        return Response(build_report_snapshot(section_id, date_from, date_to))
 
-        stall_qs = Stall.objects.all()
-        complaint_qs = Complaint.objects.all()
-        vendor_qs = Vendor.objects.all()
-
-        if section_id:
-            stall_qs = stall_qs.filter(section_id=section_id)
-            complaint_qs = complaint_qs.filter(stall__section_id=section_id)
-            vendor_qs = vendor_qs.filter(stall__section_id=section_id)
-
-        if date_from:
-            complaint_qs = complaint_qs.filter(created_at__date__gte=date_from)
-        if date_to:
-            complaint_qs = complaint_qs.filter(created_at__date__lte=date_to)
-
-        total = stall_qs.count()
-        occupied = stall_qs.filter(status='occupied').count()
-        vacant = stall_qs.filter(status='vacant').count()
-        reserved = stall_qs.filter(status='reserved').count()
-        flagged = stall_qs.filter(status='flagged').count()
-
-        sections = MarketSection.objects.annotate(
-            total=Count('stalls'),
-            occupied=Count('stalls', filter=Q(stalls__status='occupied')),
-            vacant=Count('stalls', filter=Q(stalls__status='vacant')),
-            reserved=Count('stalls', filter=Q(stalls__status='reserved')),
-        ).values('code', 'name', 'total', 'occupied', 'vacant', 'reserved')
-
-        section_report = []
-        for s in sections:
-            rate = round((s['occupied'] / s['total'] * 100), 1) if s['total'] > 0 else 0
-            section_report.append({**s, 'occupancy_rate': rate})
-
-        # Complaint trend (last 6 months)
-        complaint_trend = []
-        today = date.today()
-        for i in range(5, -1, -1):
-            month_start = (today.replace(day=1) - timedelta(days=i*28)).replace(day=1)
-            month_end = (month_start + timedelta(days=32)).replace(day=1)
-            count = Complaint.objects.filter(
-                created_at__date__gte=month_start,
-                created_at__date__lt=month_end
-            ).count()
-            complaint_trend.append({
-                'month': month_start.strftime('%b %Y'),
-                'count': count,
-            })
 
         return Response({
             'occupancy': {
@@ -244,3 +272,57 @@ class PublicStatsView(APIView):
             'stall_cards': stall_cards,
             'price_categories': price_categories,
         })
+
+from .models import AIRiskProfile, AccomplishmentReport
+from .serializers import AIRiskProfileSerializer, AccomplishmentReportSerializer
+from rest_framework.decorators import action
+from .services import compute_risk_for_vendor
+
+class AIRiskProfileViewSet(viewsets.ModelViewSet):
+    serializer_class = AIRiskProfileSerializer
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['risk_level']
+    ordering_fields = ['risk_score', 'last_assessment_date']
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        return AIRiskProfile.objects.select_related('vendor').all()
+
+    @action(detail=False, methods=['post'])
+    def recompute(self, request):
+        n = 0
+        for v in Vendor.objects.filter(is_active=True):
+            compute_risk_for_vendor(v)
+            n += 1
+        return Response({'recomputed': n})
+
+class AccomplishmentReportViewSet(viewsets.ModelViewSet):
+    serializer_class = AccomplishmentReportSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['report_period_start', 'report_period_end']
+    search_fields = ['title', 'summary']
+    ordering_fields = ['created_at']
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        return AccomplishmentReport.objects.select_related('generated_by').all()
+
+    @action(detail=False, methods=['post'])
+    def generate(self, request):
+        start = request.data.get('period_start')
+        end = request.data.get('period_end')
+        if not start or not end:
+            return Response({'error': 'period_start and period_end are required'}, status=400)
+            
+        snapshot = build_report_snapshot(None, start, end)
+        summary_text = f"Report generated covering {start} to {end}. Total vendors active: {Vendor.objects.filter(is_active=True).count()}."
+        
+        report = AccomplishmentReport.objects.create(
+            generated_by=request.user,
+            report_period_start=start,
+            report_period_end=end,
+            title=f"Accomplishment Report {start} to {end}",
+            summary=summary_text,
+            data_snapshot=snapshot,
+        )
+        return Response(AccomplishmentReportSerializer(report).data, status=201)

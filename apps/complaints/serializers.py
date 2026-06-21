@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Complaint
+from .models import Complaint, Blotter
 from apps.vendors.serializers import VendorSerializer, StallListSerializer
 
 
@@ -36,3 +36,12 @@ class ComplaintCreateSerializer(serializers.ModelSerializer):
         model = Complaint
         fields = ['vendor', 'stall', 'category', 'subject', 'description',
                   'evidence_file', 'complainant_name', 'complainant_contact']
+
+
+class BlotterSerializer(serializers.ModelSerializer):
+    vendor_name = serializers.CharField(source='vendor.full_name', read_only=True)
+    recorded_by_name = serializers.CharField(source='recorded_by.get_full_name', read_only=True)
+
+    class Meta:
+        model = Blotter
+        fields = '__all__'

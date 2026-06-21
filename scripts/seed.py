@@ -18,7 +18,7 @@ from apps.vendors.models import MarketSection, Stall, Vendor
 from apps.complaints.models import Complaint
 from apps.documents.models import Document
 from apps.sanitation.models import SanitationCheckItem, SanitationSession, SanitationRecord
-from apps.prices.models import CommodityCategory, Commodity, PriceReport, PriceEntry
+from apps.prices.models import CommodityCategory, Commodity
 from apps.notifications.models import Notification
 
 print("🌱 Starting seed...")
@@ -348,36 +348,7 @@ for i, (roman, cname, items) in enumerate(categories_data):
 total_commodities = Commodity.objects.count()
 print(f"  ✓ {len(cat_objs)} categories, {total_commodities} commodities")
 
-# ─── PRICE REPORT (sample) ───────────────────────────────────────────────────
 
-report, created = PriceReport.objects.get_or_create(
-    report_date=today,
-    defaults={
-        'submitted_by': admin_user,
-        'period_label': f'Week of {today.strftime("%B %d, %Y")}',
-        'is_published': True,
-        'notes': 'Weekly price monitoring report.',
-    }
-)
-
-import decimal
-import random
-random.seed(42)
-
-for cname, commodity in commodity_objs.items():
-    base = float(commodity.standard_price or 50)
-    prices = [round(base * random.uniform(0.92, 1.10), 2) for _ in range(5)]
-    PriceEntry.objects.get_or_create(
-        report=report,
-        commodity=commodity,
-        defaults={
-            'respondent_1': prices[0], 'respondent_2': prices[1], 'respondent_3': prices[2],
-            'respondent_4': prices[3], 'respondent_5': prices[4],
-            'previous_price': round(base * random.uniform(0.95, 1.05), 2),
-            'remark': random.choice(['stable', 'stable', 'stable', 'high', 'low']),
-        }
-    )
-print(f"  ✓ Price report created for {today}")
 
 # ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 

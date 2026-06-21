@@ -20,6 +20,9 @@ class User(AbstractUser):
 
     class Meta:
         ordering = ['-date_joined']
+        indexes = [
+            models.Index(fields=['role'], name='idx_user_role'),
+        ]
 
     def __str__(self):
         return f"{self.get_full_name() or self.username} ({self.role})"

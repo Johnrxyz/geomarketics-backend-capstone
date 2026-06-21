@@ -82,6 +82,10 @@ class Document(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['vendor'], name='idx_document_vendor'),
+            models.Index(fields=['expiry_date'], name='idx_document_expiry'),
+        ]
 
     def __str__(self):
         return f"{self.vendor} - {self.get_document_type_display()}"

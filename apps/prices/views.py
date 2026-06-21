@@ -4,9 +4,8 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import CommodityCategory, Commodity, PriceReport, PriceEntry
-from .serializers import (CommodityCategorySerializer, CommoditySerializer,
-                          PriceReportSerializer, PriceReportListSerializer, PriceEntrySerializer)
+from .models import CommodityCategory, Commodity
+from .serializers import CommodityCategorySerializer, CommoditySerializer
 
 
 class LargeResultsSetPagination(PageNumberPagination):
@@ -44,64 +43,7 @@ class CommodityViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'category__order', 'order']
 
 
-class PriceReportViewSet(viewsets.ModelViewSet):
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_published', 'report_date']
-    ordering_fields = ['report_date', 'created_at']
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = PriceReport.objects.select_related('submitted_by').all()
-        if not user.is_authenticated or user.role == 'customer':
-            return qs.filter(is_published=True)
-        return qs
-
-    def get_serializer_class(self):
-        if self.action == 'retrieve':
-            return PriceReportSerializer
-        return PriceReportListSerializer
-
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'latest']:
-            return [permissions.AllowAny()]
-        return [IsAdminRole()]
-
-    def perform_create(self, serializer):
-        serializer.save(submitted_by=self.request.user)
-
-    @action(detail=True, methods=['post'], url_path='bulk-entries')
-    def bulk_entries(self, request, pk=None):
-        """Accept entries array and upsert all price entries for a report."""
-        report = self.get_object()
-        entries_data = request.data.get('entries', [])
-        created, updated = 0, 0
-        for item in entries_data:
-            obj, is_new = PriceEntry.objects.update_or_create(
-                report=report,
-                commodity_id=item.get('commodity'),
-                defaults={
-                    'respondent_1': item.get('respondent_1'),
-                    'respondent_2': item.get('respondent_2'),
-                    'respondent_3': item.get('respondent_3'),
-                    'respondent_4': item.get('respondent_4'),
-                    'respondent_5': item.get('respondent_5'),
-                    'previous_price': item.get('previous_price'),
-                    'remark': item.get('remark', 'stable'),
-                }
-            )
-            if is_new:
-                created += 1
-            else:
-                updated += 1
-        return Response({'created': created, 'updated': updated})
-
-    @action(detail=False, methods=['get'], url_path='latest')
-    def latest(self, request):
-        qs = self.get_queryset()
-        latest = qs.first()
-        if not latest:
-            return Response({'detail': 'No reports found.'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(PriceReportSerializer(latest).data)
 
 
 class PriceSnapshotViewSet(viewsets.ReadOnlyModelViewSet):

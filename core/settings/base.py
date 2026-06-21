@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     # Local apps — extended
     'apps.documents',
     'apps.prices',
+    'apps.violations',
     # Local apps — GeoMarketics
     'apps.markets',
     'apps.ingestion',
