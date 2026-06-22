@@ -19,21 +19,19 @@ class MarketSection(models.Model):
 
 
 class Stall(models.Model):
-    STATUS_OCCUPIED = 'occupied'
-    STATUS_VACANT = 'vacant'
-    STATUS_RESERVED = 'reserved'
-    STATUS_FLAGGED = 'flagged'
-    STATUS_CLOSED = 'closed'
+    STATUS_OWNER = 'owner'
+    STATUS_RENTED = 'rented'
     STATUS_STORAGE = 'storage'
-    STATUS_AMBULANT = 'ambulant'
+    STATUS_SURRENDERED_BOLANTE = 'surrendered_bolante'
+    STATUS_VACANT = 'vacant'
+    STATUS_CLOSED = 'closed'
     STATUS_CHOICES = [
-        (STATUS_OCCUPIED, 'Occupied'),
-        (STATUS_VACANT, 'Vacant'),
-        (STATUS_RESERVED, 'Reserved'),
-        (STATUS_FLAGGED, 'Flagged'),
-        (STATUS_CLOSED, 'Closed'),
-        (STATUS_STORAGE, 'Storage/Bodega'),
-        (STATUS_AMBULANT, 'Ambulant'),
+        (STATUS_OWNER, 'Managed by the Owner'),
+        (STATUS_RENTED, 'With Renter'),
+        (STATUS_STORAGE, 'Bodega'),
+        (STATUS_SURRENDERED_BOLANTE, 'Surrendered w/ Bolante'),
+        (STATUS_VACANT, 'Surrendered / Vacant'),
+        (STATUS_CLOSED, 'Closed / No Operation'),
     ]
 
     stall_number = models.CharField(max_length=20, unique=True)
@@ -42,6 +40,12 @@ class Stall(models.Model):
     area_sqm = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     monthly_rent = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_VACANT)
+    BUILDING_CHOICES = [('main', 'Main Building'), ('annex', 'Annex Building')]
+    FLOOR_CHOICES = [('1', '1st Floor'), ('2', '2nd Floor')]
+
+    building = models.CharField(max_length=10, choices=BUILDING_CHOICES, default='main')
+    floor = models.CharField(max_length=2, choices=FLOOR_CHOICES, default='1')
+    svg_cell_id = models.CharField(max_length=100, blank=True, help_text='draw.io data-cell-id from the SVG floor plan')
     map_x = models.IntegerField(null=True, blank=True)
     map_y = models.IntegerField(null=True, blank=True)
     map_width = models.IntegerField(null=True, blank=True)

@@ -112,7 +112,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
@@ -137,7 +137,7 @@ SOURCE_DOCUMENTS_DIR = MEDIA_ROOT / 'source_documents'
 # -------------------------------------------------------
 # OCR Provider Settings
 # -------------------------------------------------------
-OCR_PROVIDER = env('OCR_PROVIDER', 'GEMINI') # Defaults to GEMINI per revision
+OCR_PROVIDER = env('OCR_PROVIDER', 'PADDLE') # Defaults to PADDLE per revision
 GEMINI_API_KEY = env('GEMINI_API_KEY', '')
 
 # -------------------------------------------------------

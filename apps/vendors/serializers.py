@@ -25,7 +25,8 @@ class StallListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stall
         fields = ['id', 'stall_number', 'section', 'section_name', 'section_code',
-                  'category', 'status', 'area_sqm', 'monthly_rent', 'vendor_name']
+                  'category', 'status', 'area_sqm', 'monthly_rent', 'vendor_name',
+                  'building', 'floor', 'svg_cell_id']
 
     def get_vendor_name(self, obj):
         if hasattr(obj, 'vendor') and obj.vendor:

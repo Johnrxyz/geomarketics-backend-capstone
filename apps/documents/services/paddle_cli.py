@@ -15,10 +15,10 @@ def main():
         from paddleocr import PaddleOCR
         # Initialize OCR once, optimized for CPU speed
         # use_textline_orientation=False skips a heavy model run per text box
-        ocr = PaddleOCR(use_textline_orientation=False, lang='en', show_log=False)
+        ocr = PaddleOCR(use_textline_orientation=False, lang='en')
         
         for file_path in file_paths:
-            result = ocr.ocr(file_path, cls=True)
+            result = ocr.ocr(file_path)
             
             if not result or not result[0]:
                 results_dict[file_path] = ""

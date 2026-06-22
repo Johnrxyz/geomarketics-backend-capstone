@@ -67,6 +67,8 @@ class ComplaintViewSet(viewsets.ModelViewSet):
 
         complaint = serializer.save(**kwargs)
 
+        category_display = dict(Complaint.CATEGORY_CHOICES).get(complaint.category, complaint.category)
+
         # Notify Administrators
         admins = User.objects.filter(role='admin')
         for admin in admins:
@@ -74,8 +76,21 @@ class ComplaintViewSet(viewsets.ModelViewSet):
                 recipient=admin,
                 notification_type=Notification.TYPE_INFO,
                 title='New Complaint Filed',
-                message=f'A new complaint ({complaint.complaint_number}) has been filed regarding {complaint.category}.',
+                message=f'A new complaint ({complaint.complaint_number}) has been filed regarding {category_display}.',
                 link='/admin/complaints'
+            )
+
+        # Notify the Vendor that a complaint has been filed against them
+        if complaint.vendor and hasattr(complaint.vendor, 'user') and complaint.vendor.user:
+            Notification.objects.create(
+                recipient=complaint.vendor.user,
+                notification_type=Notification.TYPE_WARNING,
+                title='Complaint Filed Against Your Stall',
+                message=(
+                    f'A new complaint ({complaint.complaint_number}) has been filed against your stall '
+                    f'regarding {category_display}. Please check the details.'
+                ),
+                link='/vendor/complaints'
             )
 
     @action(detail=True, methods=['patch'], url_path='update-status')

@@ -19,7 +19,7 @@ def extract_text_paddleocr(file_paths):
         cli_script = os.path.join(os.path.dirname(__file__), 'paddle_cli.py')
         
         # Run the isolated script and wait for it to finish (with a timeout of 60 seconds per file)
-        timeout = 60 * len(file_paths)
+        timeout = 180 * len(file_paths)
         print(f"[OCR START] Spawning isolated process for {len(file_paths)} files")
         result = subprocess.run(
             [sys.executable, cli_script, *file_paths],
@@ -29,7 +29,7 @@ def extract_text_paddleocr(file_paths):
         )
         
         if result.returncode != 0:
-            print(f"[OCR ERROR] Process failed with code {result.returncode}:\n{result.stderr}")
+            print(f"[OCR ERROR] Process failed with code {result.returncode}:\nStderr: {result.stderr}\nStdout: {result.stdout}")
             return {p: "" for p in file_paths}
             
         try:
