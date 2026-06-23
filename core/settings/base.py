@@ -63,6 +63,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Allow up to 20MB for Base64 image uploads from the camera
+DATA_UPLOAD_MAX_MEMORY_SIZE = 20971520
+
 ROOT_URLCONF = 'core.urls'
 
 TEMPLATES = [

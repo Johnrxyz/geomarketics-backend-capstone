@@ -1,11 +1,12 @@
 from django.contrib import admin
-from .models import Document
+from django.apps import apps
 
-
-@admin.register(Document)
-class DocumentAdmin(admin.ModelAdmin):
-    list_display = ['title', 'vendor', 'document_type', 'status', 'expiry_date', 'created_at']
-    list_filter = ['status', 'document_type']
-    search_fields = ['title', 'vendor__first_name', 'vendor__last_name']
-    ordering = ['-created_at']
-    readonly_fields = ['created_at', 'updated_at', 'reviewed_at']
+try:
+    app_config = apps.get_app_config(__package__.split('.')[-1])
+    for model in app_config.get_models():
+        try:
+            admin.site.register(model)
+        except admin.sites.AlreadyRegistered:
+            pass
+except Exception:
+    pass

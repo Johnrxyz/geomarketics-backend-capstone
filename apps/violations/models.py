@@ -30,6 +30,7 @@ class Violation(models.Model):
     description = models.TextField()
     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default=SEVERITY_MEDIUM)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    photo = models.TextField(blank=True, null=True, help_text="Base64 encoded photo evidence")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 
 
 class Market(models.Model):
@@ -132,3 +133,45 @@ class UnknownEntity(models.Model):
 
     def __str__(self):
         return f'[{self.entity_type}] "{self.raw_name}" ({self.resolution_status})'
+
+
+class Announcement(models.Model):
+    CATEGORY_SCHEDULE = 'schedule'
+    CATEGORY_HOLIDAY = 'holiday'
+    CATEGORY_INSPECTION = 'inspection'
+    CATEGORY_ADVISORY = 'advisory'
+    CATEGORY_GENERAL = 'general'
+    CATEGORY_CHOICES = [
+        (CATEGORY_SCHEDULE, 'Schedule Change'),
+        (CATEGORY_HOLIDAY, 'Holiday Closure'),
+        (CATEGORY_INSPECTION, 'Inspection Date'),
+        (CATEGORY_ADVISORY, 'Public Advisory'),
+        (CATEGORY_GENERAL, 'General'),
+    ]
+
+    PRIORITY_LOW = 'low'
+    PRIORITY_MEDIUM = 'medium'
+    PRIORITY_HIGH = 'high'
+    PRIORITY_CHOICES = [
+        (PRIORITY_LOW, 'Low'),
+        (PRIORITY_MEDIUM, 'Medium'),
+        (PRIORITY_HIGH, 'High'),
+    ]
+
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default=CATEGORY_GENERAL)
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default=PRIORITY_MEDIUM)
+    is_active = models.BooleanField(default=True)
+    start_date = models.DateTimeField(null=True, blank=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} ({self.get_category_display()})"
+

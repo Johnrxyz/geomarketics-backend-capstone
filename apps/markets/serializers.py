@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Market, MarketAlias, UnknownEntity
+from .models import Market, MarketAlias, UnknownEntity, Announcement
 
 class MarketSerializer(serializers.ModelSerializer):
     class Meta:
@@ -20,4 +20,11 @@ class UnknownEntitySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UnknownEntity
+        fields = '__all__'
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    author_name = serializers.CharField(source='author.get_full_name', read_only=True)
+
+    class Meta:
+        model = Announcement
         fields = '__all__'

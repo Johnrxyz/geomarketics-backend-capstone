@@ -56,10 +56,11 @@ class VendorSerializer(serializers.ModelSerializer):
     section_code = serializers.CharField(source='stall.section.code', read_only=True)
     stall_status = serializers.CharField(source='stall.status', read_only=True)
     products_list = serializers.ListField(read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
 
     class Meta:
         model = Vendor
-        fields = ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone',
+        fields = ['id', 'user_id', 'first_name', 'last_name', 'full_name', 'email', 'phone',
                   'address', 'stall', 'stall_number', 'section_name', 'section_code',
                   'stall_status', 'products', 'products_list', 'permit_number',
                   'permit_expiry', 'health_cert_expiry', 'is_active',

@@ -11,7 +11,7 @@ from apps.prices.views import CommodityCategoryViewSet, CommodityViewSet, PriceS
 from apps.analytics.views import DashboardView, ReportsView, PublicStatsView, AIRiskProfileViewSet, AccomplishmentReportViewSet
 from apps.violations.views import ViolationViewSet, PenaltyViewSet
 from apps.notifications.views import NotificationViewSet
-from apps.markets.views import MarketViewSet, MarketAliasViewSet, UnknownEntityViewSet
+from apps.markets.views import MarketViewSet, MarketAliasViewSet, UnknownEntityViewSet, AnnouncementViewSet
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet, basename='user')
@@ -29,6 +29,7 @@ router.register(r'prices/commodities', CommodityViewSet, basename='commodity')
 router.register(r'prices/snapshots', PriceSnapshotViewSet, basename='price-snapshot')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'markets', MarketViewSet, basename='market')
+router.register(r'announcements', AnnouncementViewSet, basename='announcement')
 router.register(r'markets-aliases', MarketAliasViewSet, basename='market-alias')
 router.register(r'unknown-entities', UnknownEntityViewSet, basename='unknown-entity')
 router.register(r'violations', ViolationViewSet, basename='violation')

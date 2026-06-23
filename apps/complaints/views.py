@@ -28,9 +28,10 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         user = self.request.user
         qs = Complaint.objects.select_related('vendor', 'stall', 'complainant').all()
         if user.role == 'vendor':
-            if hasattr(user, 'vendor_profile'):
+            try:
                 return qs.filter(vendor=user.vendor_profile)
-            return qs.none()
+            except Exception:
+                return qs.none()
         if user.role == 'customer':
             return qs.filter(complainant=user)
         return qs  # admin sees all
@@ -52,8 +53,11 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         kwargs = {}
         if user.is_authenticated:
             kwargs['complainant'] = user
-            if user.role == 'vendor' and hasattr(user, 'vendor_profile'):
-                kwargs['vendor'] = user.vendor_profile
+            if user.role == 'vendor':
+                try:
+                    kwargs['vendor'] = user.vendor_profile
+                except Exception:
+                    pass
 
         # Auto-link vendor if stall is provided but vendor is not
         stall = serializer.validated_data.get('stall')
@@ -181,8 +185,11 @@ class BlotterViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Blotter.objects.select_related('vendor', 'recorded_by').all()
-        if getattr(user, 'role', '') == 'vendor' and hasattr(user, 'vendor_profile'):
-            return qs.filter(vendor=user.vendor_profile)
+        if getattr(user, 'role', '') == 'vendor':
+            try:
+                return qs.filter(vendor=user.vendor_profile)
+            except Exception:
+                return qs.none()
         return qs
 
     def get_permissions(self):

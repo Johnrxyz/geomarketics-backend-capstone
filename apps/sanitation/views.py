@@ -23,11 +23,12 @@ class SanitationSessionViewSet(viewsets.ModelViewSet):
         qs = SanitationSession.objects.select_related('section', 'conducted_by').all()
         if user.role == 'vendor':
             # vendors can only see sessions where they were checked
-            if hasattr(user, 'vendor_profile'):
+            try:
                 vendor = user.vendor_profile
                 session_ids = SanitationRecord.objects.filter(vendor=vendor).values_list('session_id', flat=True)
                 return qs.filter(pk__in=session_ids)
-            return qs.none()
+            except Exception:
+                return qs.none()
         return qs  # admin sees all
 
     def get_serializer_class(self):
@@ -83,8 +84,11 @@ class SanitationRecordViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = SanitationRecord.objects.select_related('vendor', 'check_item', 'session').all()
-        if user.role == 'vendor' and hasattr(user, 'vendor_profile'):
-            return qs.filter(vendor=user.vendor_profile)
+        if user.role == 'vendor':
+            try:
+                return qs.filter(vendor=user.vendor_profile)
+            except Exception:
+                return qs.none()
         return qs
 
     def get_permissions(self):

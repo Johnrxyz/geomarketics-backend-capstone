@@ -3,8 +3,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import Market, MarketAlias, UnknownEntity
-from .serializers import MarketSerializer, MarketAliasSerializer, UnknownEntitySerializer
+from .models import Market, MarketAlias, UnknownEntity, Announcement
+from .serializers import MarketSerializer, MarketAliasSerializer, UnknownEntitySerializer, AnnouncementSerializer
 
 class IsAdminOrPublic(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -54,3 +54,18 @@ class UnknownEntityViewSet(viewsets.ModelViewSet):
 
         entity.save()
         return Response(self.get_serializer(entity).data)
+
+class AnnouncementViewSet(viewsets.ModelViewSet):
+    queryset = Announcement.objects.select_related('author').all()
+    serializer_class = AnnouncementSerializer
+    permission_classes = [IsAdminOrPublic]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['category', 'priority', 'is_active']
+    search_fields = ['title', 'content']
+    ordering_fields = ['created_at', 'start_date']
+
+    def perform_create(self, serializer):
+        if self.request.user.is_authenticated:
+            serializer.save(author=self.request.user)
+        else:
+            serializer.save()

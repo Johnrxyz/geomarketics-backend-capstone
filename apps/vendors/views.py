@@ -57,9 +57,10 @@ class VendorViewSet(viewsets.ModelViewSet):
         user = self.request.user
         qs = Vendor.objects.select_related('stall', 'stall__section', 'user').all()
         if user.role == 'vendor':
-            if hasattr(user, 'vendor_profile'):
+            try:
                 return qs.filter(pk=user.vendor_profile.pk)
-            return qs.none()
+            except Exception:
+                return qs.none()
         if user.role == 'customer':
             return qs.filter(is_active=True)
         return qs  # admin sees all

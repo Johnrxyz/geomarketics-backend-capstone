@@ -8,6 +8,15 @@ from .serializers import NotificationSerializer
 class NotificationViewSet(viewsets.ModelViewSet):
     serializer_class = NotificationSerializer
 
+    def create(self, request, *args, **kwargs):
+        import traceback
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as e:
+            with open("error.log", "w") as f:
+                f.write(traceback.format_exc())
+            raise
+
     def get_queryset(self):
         return Notification.objects.filter(recipient=self.request.user)
 

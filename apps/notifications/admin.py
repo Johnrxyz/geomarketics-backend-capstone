@@ -1,11 +1,12 @@
 from django.contrib import admin
-from .models import Notification
+from django.apps import apps
 
-
-@admin.register(Notification)
-class NotificationAdmin(admin.ModelAdmin):
-    list_display = ['recipient', 'notification_type', 'title', 'is_read', 'created_at']
-    list_filter = ['notification_type', 'is_read']
-    search_fields = ['recipient__username', 'title', 'message']
-    ordering = ['-created_at']
-    readonly_fields = ['created_at']
+try:
+    app_config = apps.get_app_config(__package__.split('.')[-1])
+    for model in app_config.get_models():
+        try:
+            admin.site.register(model)
+        except admin.sites.AlreadyRegistered:
+            pass
+except Exception:
+    pass

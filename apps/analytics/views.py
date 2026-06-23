@@ -23,7 +23,7 @@ class DashboardView(APIView):
 
     def get(self, request):
         total_stalls = Stall.objects.count()
-        occupied_stalls = Stall.objects.filter(status='occupied').count()
+        occupied_stalls = Stall.objects.filter(status__in=['occupied', 'owner', 'rented', 'storage']).count()
         active_vendors = Vendor.objects.filter(is_active=True).count()
         open_complaints = Complaint.objects.filter(status='open').count()
         pending_documents = Document.objects.filter(status='pending').count()
@@ -31,8 +31,8 @@ class DashboardView(APIView):
         # Occupancy by section
         sections = MarketSection.objects.annotate(
             total=Count('stalls'),
-            occupied=Count('stalls', filter=Q(stalls__status='occupied'))
-        ).values('code', 'name', 'total', 'occupied')
+            occupied=Count('stalls', filter=Q(stalls__status__in=['occupied', 'owner', 'rented', 'storage']))
+        ).filter(total__gt=0).values('code', 'name', 'total', 'occupied')
 
         section_data = []
         for s in sections:
@@ -125,17 +125,17 @@ def build_report_snapshot(section_id=None, date_from=None, date_to=None):
         complaint_qs = complaint_qs.filter(created_at__date__lte=date_to)
 
     total = stall_qs.count()
-    occupied = stall_qs.filter(status='occupied').count()
+    occupied = stall_qs.filter(status__in=['occupied', 'owner', 'rented', 'storage']).count()
     vacant = stall_qs.filter(status='vacant').count()
     reserved = stall_qs.filter(status='reserved').count()
     flagged = stall_qs.filter(status='flagged').count()
 
     sections = MarketSection.objects.annotate(
         total=Count('stalls'),
-        occupied=Count('stalls', filter=Q(stalls__status='occupied')),
+        occupied=Count('stalls', filter=Q(stalls__status__in=['occupied', 'owner', 'rented', 'storage'])),
         vacant=Count('stalls', filter=Q(stalls__status='vacant')),
         reserved=Count('stalls', filter=Q(stalls__status='reserved')),
-    ).values('code', 'name', 'total', 'occupied', 'vacant', 'reserved')
+    ).filter(total__gt=0).values('code', 'name', 'total', 'occupied', 'vacant', 'reserved')
 
     section_report = []
     for s in sections:
@@ -219,12 +219,12 @@ class PublicStatsView(APIView):
 
     def get(self, request):
         total_stalls = Stall.objects.count()
-        open_stalls = Stall.objects.filter(status='occupied').count()
+        open_stalls = Stall.objects.filter(status__in=['occupied', 'owner', 'rented', 'storage']).count()
         active_vendors = Vendor.objects.filter(is_active=True).count()
         sections = MarketSection.objects.count()
 
         # Public stall cards
-        stalls = Stall.objects.filter(status='occupied').select_related('section', 'vendor').order_by('stall_number')[:12]
+        stalls = Stall.objects.filter(status__in=['occupied', 'owner', 'rented', 'storage']).select_related('section', 'vendor').order_by('stall_number')[:12]
         stall_cards = []
         for stall in stalls:
             v = getattr(stall, 'vendor', None)
