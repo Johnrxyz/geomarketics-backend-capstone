@@ -171,3 +171,12 @@ else:
             "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
         },
     }
+
+# -------------------------------------------------------
+# Semaphore SMS Gateway
+# -------------------------------------------------------
+# Get your API key at https://semaphore.co
+# Set SEMAPHORE_API_KEY in your .env file.
+# SEMAPHORE_SENDER_NAME must be registered with Semaphore (max 11 chars).
+SEMAPHORE_API_KEY = env('SEMAPHORE_API_KEY', '')
+SEMAPHORE_SENDER_NAME = env('SEMAPHORE_SENDER_NAME', 'GeoMktcs')

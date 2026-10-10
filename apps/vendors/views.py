@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.db.models import Count, Q
 from .models import MarketSection, Stall, Vendor
 from .serializers import MarketSectionSerializer, StallListSerializer, StallDetailSerializer, VendorSerializer
 
@@ -44,6 +45,84 @@ class StallViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         return [IsAdminRole()]
+
+    @action(detail=False, methods=['get'], url_path='alert-summary', permission_classes=[IsAdminRole])
+    def alert_summary(self, request):
+        """
+        Returns one record per stall that has open complaints or active violations.
+        Each record contains an 'alerts' array so a stall can have both types simultaneously.
+        No new DB tables — queries existing Complaint and Violation models via FK relationships.
+        """
+        from apps.complaints.models import Complaint
+        from apps.violations.models import Violation
+
+        # ── Open / reviewing complaints grouped by stall ──────────────────
+        complaint_qs = (
+            Complaint.objects
+            .filter(
+                stall__isnull=False,
+                status__in=[Complaint.STATUS_OPEN, Complaint.STATUS_REVIEWING],
+                is_flagged_spam=False,
+            )
+            .values('stall__id', 'stall__stall_number', 'stall__svg_cell_id', 'stall__building', 'stall__floor')
+            .annotate(count=Count('id'))
+        )
+
+        # ── Active violations grouped by vendor → stall ───────────────────
+        violation_qs = (
+            Violation.objects
+            .filter(
+                status=Violation.STATUS_ACTIVE,
+                vendor__stall__isnull=False,
+            )
+            .values(
+                'vendor__stall__id',
+                'vendor__stall__stall_number',
+                'vendor__stall__svg_cell_id',
+                'vendor__stall__building',
+                'vendor__stall__floor',
+            )
+            .annotate(count=Count('id'))
+        )
+
+        # ── Merge into one dict keyed by stall DB id ──────────────────────
+        merged: dict = {}
+
+        for row in complaint_qs:
+            sid = row['stall__id']
+            if sid not in merged:
+                merged[sid] = {
+                    'stall_db_id': sid,
+                    'stall_number': row['stall__stall_number'],
+                    'svg_cell_id': row['stall__svg_cell_id'] or '',
+                    'building': row['stall__building'],
+                    'floor': row['stall__floor'],
+                    'alerts': [],
+                }
+            merged[sid]['alerts'].append({
+                'type': 'complaint',
+                'severity': 'medium',   # complaint open/reviewing — orange in UI
+                'count': row['count'],
+            })
+
+        for row in violation_qs:
+            sid = row['vendor__stall__id']
+            if sid not in merged:
+                merged[sid] = {
+                    'stall_db_id': sid,
+                    'stall_number': row['vendor__stall__stall_number'],
+                    'svg_cell_id': row['vendor__stall__svg_cell_id'] or '',
+                    'building': row['vendor__stall__building'],
+                    'floor': row['vendor__stall__floor'],
+                    'alerts': [],
+                }
+            merged[sid]['alerts'].append({
+                'type': 'violation',
+                'severity': 'high',     # active violation — red in UI
+                'count': row['count'],
+            })
+
+        return Response(list(merged.values()))
 
 
 class VendorViewSet(viewsets.ModelViewSet):

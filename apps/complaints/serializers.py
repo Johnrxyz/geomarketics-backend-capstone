@@ -16,6 +16,7 @@ class ComplaintSerializer(serializers.ModelSerializer):
                   'complainant_contact', 'complainant_display', 'vendor', 'vendor_name',
                   'stall', 'stall_number', 'category', 'category_display',
                   'subject', 'description', 'evidence_file', 'status', 'status_display',
+                  'is_flagged_spam', 'spam_reason',
                   'resolution_notes', 'resolved_at', 'resolved_by', 'created_at', 'updated_at']
         read_only_fields = ['id', 'complaint_number', 'created_at', 'updated_at']
 

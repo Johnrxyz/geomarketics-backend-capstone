@@ -62,6 +62,8 @@ class Complaint(models.Model):
     description = models.TextField()
     evidence_file = models.FileField(upload_to='complaints/', null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    is_flagged_spam = models.BooleanField(default=False)
+    spam_reason = models.CharField(max_length=300, blank=True)
     resolution_notes = models.TextField(blank=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     resolved_by = models.ForeignKey(
