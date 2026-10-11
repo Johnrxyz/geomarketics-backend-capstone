@@ -11,7 +11,10 @@ from .serializers import CommodityCategorySerializer, CommoditySerializer
 class LargeResultsSetPagination(PageNumberPagination):
     page_size = 1000
     page_size_query_param = 'page_size'
-    max_page_size = 5000
+    # 6000 covers ~6 survey dates across all markets (~960 records/date).
+    # The landing page requests page_size=10000; this cap limits server load
+    # while still providing sufficient history for 30-day sparklines.
+    max_page_size = 6000
 
 
 class IsAdminRole(permissions.BasePermission):

@@ -190,30 +190,6 @@ class ReportsView(APIView):
         return Response(build_report_snapshot(section_id, date_from, date_to))
 
 
-        return Response({
-            'occupancy': {
-                'total': total,
-                'occupied': occupied,
-                'vacant': vacant,
-                'reserved': reserved,
-                'flagged': flagged,
-                'rate': round((occupied / total * 100), 1) if total > 0 else 0,
-            },
-            'section_report': section_report,
-            'complaint_trend': complaint_trend,
-            'complaint_summary': {
-                'total': complaint_qs.count(),
-                'open': complaint_qs.filter(status='open').count(),
-                'reviewing': complaint_qs.filter(status='reviewing').count(),
-                'resolved': complaint_qs.filter(status='resolved').count(),
-            },
-            'vendor_compliance': {
-                'avg_rate': round(float(vendor_qs.aggregate(avg=Avg('compliance_rate'))['avg'] or 0), 1),
-                'below_70': vendor_qs.filter(compliance_rate__lt=70).count(),
-            }
-        })
-
-
 class PublicStatsView(APIView):
     permission_classes = [permissions.AllowAny]
 

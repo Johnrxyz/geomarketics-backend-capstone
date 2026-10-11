@@ -6,7 +6,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django.utils import timezone
 from datetime import timedelta
 from .models import Complaint, Blotter
-from .serializers import ComplaintSerializer, ComplaintCreateSerializer, BlotterSerializer
+from .serializers import ComplaintSerializer, ComplaintVendorSerializer, ComplaintCreateSerializer, BlotterSerializer
 from apps.notifications.models import Notification
 from django.contrib.auth import get_user_model
 from utils.sms import notify_admins_sms
@@ -41,6 +41,9 @@ class ComplaintViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == 'create':
             return ComplaintCreateSerializer
+        # Vendors see complaint details but not complainant identity
+        if hasattr(self.request, 'user') and getattr(self.request.user, 'role', None) == 'vendor':
+            return ComplaintVendorSerializer
         return ComplaintSerializer
 
     def get_permissions(self):
@@ -49,6 +52,21 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update', 'destroy']:
             return [IsAdminRole()]
         return [permissions.IsAuthenticated()]
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Override retrieve to enforce the same role-based queryset used by list().
+        Without this, get_object() would bypass the role filter and allow any
+        authenticated user to fetch any complaint by ID.
+        """
+        # get_queryset() already applies role-based filtering
+        instance = self.get_queryset().filter(pk=kwargs['pk']).first()
+        if instance is None:
+            from rest_framework.exceptions import NotFound
+            raise NotFound(detail="Complaint not found or you do not have permission to view it.")
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
 
     def perform_create(self, serializer):
         user = self.request.user

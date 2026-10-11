@@ -5,7 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Count, Q
 from .models import MarketSection, Stall, Vendor
-from .serializers import MarketSectionSerializer, StallListSerializer, StallDetailSerializer, VendorSerializer
+from .serializers import MarketSectionSerializer, StallListSerializer, StallDetailSerializer, VendorSerializer, VendorPublicSerializer
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -131,6 +131,18 @@ class VendorViewSet(viewsets.ModelViewSet):
     filterset_fields = ['is_active', 'stall__section', 'stall__status']
     search_fields = ['first_name', 'last_name', 'email', 'stall__stall_number']
     ordering_fields = ['last_name', 'first_name', 'created_at', 'compliance_rate']
+
+    def get_serializer_class(self):
+        """
+        Return a limited public serializer for customer-role users so that
+        personal contact details, permit data, and compliance rates are not
+        disclosed to market shoppers.  Admin and vendor users receive the full
+        serializer.
+        """
+        user = self.request.user
+        if user.is_authenticated and getattr(user, 'role', None) == 'customer':
+            return VendorPublicSerializer
+        return VendorSerializer
 
     def get_queryset(self):
         user = self.request.user
