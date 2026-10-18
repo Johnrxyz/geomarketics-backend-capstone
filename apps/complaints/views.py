@@ -154,7 +154,7 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         )
         spam_tag = ' [SPAM FLAGGED]' if complaint.is_flagged_spam else ''
         sms_body = (
-            f"[GeoMarketics]{spam_tag} New Complaint #{complaint.complaint_number}\n"
+            f"[e-Palengke]{spam_tag} New Complaint #{complaint.complaint_number}\n"
             f"Category: {category_display}\n"
             f"Stall: {stall_info}\n"
             f"Contact: {contact_info}\n"

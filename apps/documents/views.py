@@ -29,11 +29,13 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Document.objects.select_related('vendor', 'vendor__stall', 'uploaded_by', 'reviewed_by').all()
+        if user.role == 'admin':
+            return qs
         if user.role == 'vendor':
             if hasattr(user, 'vendor_profile'):
                 return qs.filter(vendor=user.vendor_profile)
             return qs.none()
-        return qs  # admin and customer-public browsing
+        return qs.none()
 
     def get_serializer_class(self):
         return DocumentSerializer

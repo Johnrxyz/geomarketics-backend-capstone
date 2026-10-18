@@ -14,6 +14,7 @@ from rest_framework import status
 
 from apps.users.models import User
 from apps.vendors.models import MarketSection, Stall, Vendor
+from apps.vendors.serializers import StallPublicDetailSerializer, VendorPublicSerializer
 
 
 def _create_section():
@@ -65,6 +66,28 @@ class StallListSerializerFieldsTest(TestCase):
         results = response.json().get('results', response.json())
         stall = results[0]
         self.assertIn('occupancy_status', stall)
+
+    def test_anonymous_stall_list_includes_only_public_vendor_information(self):
+        section = MarketSection.objects.get(code='T')
+        stall = _create_stall(section, 'T-03')
+        Vendor.objects.create(
+            stall=stall,
+            first_name='Public',
+            last_name='Vendor',
+            email='private@example.com',
+            phone='private phone',
+            address='private address',
+            permit_number='private permit',
+        )
+
+        response = self.client.get('/api/v1/stalls/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json().get('results', response.json())
+        public_stall = next(item for item in results if item['stall_number'] == 'T-03')
+        self.assertEqual(public_stall['vendor_name'], 'Public Vendor')
+        for private_field in ('email', 'phone', 'address', 'permit_number', 'user_id'):
+            self.assertNotIn(private_field, public_stall)
 
 
 class VendorSerializerRoleTest(TestCase):
@@ -132,3 +155,83 @@ class VendorSerializerRoleTest(TestCase):
         self.client.credentials()
         response = self.client.get('/api/v1/vendors/')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class StallDetailPrivacyTest(TestCase):
+    """Public stall detail must use a strict public allowlist for non-admins."""
+
+    def setUp(self):
+        self.client = APIClient()
+        section = _create_section()
+        self.stall = _create_stall(section, 'T-DETAIL', map_x=321, map_y=654)
+        self.owner_user = User.objects.create_user(
+            username='stall_owner', password='ownerpass123', role='vendor',
+            email='account@example.com',
+        )
+        self.vendor = Vendor.objects.create(
+            user=self.owner_user,
+            stall=self.stall,
+            first_name='Private',
+            last_name='Vendor',
+            email='private.vendor@example.com',
+            phone='09170000000',
+            address='Private residential address',
+            permit_number='PRIVATE-PERMIT-001',
+            permit_expiry='2030-01-01',
+            health_cert_expiry='2030-02-01',
+            products='Produce',
+        )
+        self.customer = User.objects.create_user(
+            username='stall_customer', password='customerpass123', role='customer',
+        )
+        self.other_vendor_user = User.objects.create_user(
+            username='other_vendor', password='vendorpass123', role='vendor',
+        )
+        other_stall = _create_stall(section, 'T-OTHER')
+        Vendor.objects.create(user=self.other_vendor_user, stall=other_stall)
+        self.admin = User.objects.create_user(
+            username='stall_admin', password='adminpass123', role='admin',
+        )
+
+    def _get_detail_as(self, user=None):
+        self.client.force_authenticate(user=user)
+        return self.client.get(f'/api/v1/stalls/{self.stall.pk}/')
+
+    def _assert_public_detail(self, response):
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(set(data), set(StallPublicDetailSerializer.Meta.fields))
+        self.assertEqual(data['stall_number'], 'T-DETAIL')
+        self.assertEqual(data['svg_x'], 321)
+        self.assertEqual(data['svg_y'], 654)
+        self.assertEqual(data['vendor_name'], 'Private Vendor')
+        self.assertEqual(set(data['vendor']), set(VendorPublicSerializer.Meta.fields))
+        self.assertEqual(data['vendor']['products_list'], ['Produce'])
+        for private_field in (
+            'user_id', 'email', 'phone', 'address', 'permit_number',
+            'permit_expiry', 'health_cert_expiry', 'compliance_rate',
+        ):
+            self.assertNotIn(private_field, data['vendor'])
+
+    def test_anonymous_user_gets_allowlisted_public_stall_detail(self):
+        self._assert_public_detail(self._get_detail_as())
+
+    def test_customer_gets_allowlisted_public_stall_detail(self):
+        self._assert_public_detail(self._get_detail_as(self.customer))
+
+    def test_unrelated_vendor_gets_allowlisted_public_stall_detail(self):
+        self._assert_public_detail(self._get_detail_as(self.other_vendor_user))
+
+    def test_owning_vendor_cannot_get_private_fields_from_public_detail(self):
+        self._assert_public_detail(self._get_detail_as(self.owner_user))
+
+    def test_admin_retains_full_stall_and_vendor_detail(self):
+        response = self._get_detail_as(self.admin)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIn('created_at', data)
+        self.assertEqual(data['vendor']['email'], 'private.vendor@example.com')
+        self.assertEqual(data['vendor']['phone'], '09170000000')
+        self.assertEqual(data['vendor']['address'], 'Private residential address')
+        self.assertEqual(data['vendor']['permit_number'], 'PRIVATE-PERMIT-001')
+        self.assertEqual(data['vendor']['user_id'], self.owner_user.pk)

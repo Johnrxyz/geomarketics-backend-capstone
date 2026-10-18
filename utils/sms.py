@@ -7,7 +7,7 @@ Usage:
     from utils.sms import send_sms, notify_admins_sms
 
     # Send to one number
-    send_sms("+639171234567", "Hello from GeoMarketics!")
+    send_sms("+639171234567", "Hello from e-Palengke!")
 
     # Blast to all admin phones
     notify_admins_sms("New complaint #C-0042 filed for Overpricing.")
@@ -40,7 +40,7 @@ def send_sms(number: str, message: str) -> dict:
         logger.warning("SEMAPHORE_API_KEY not configured — SMS skipped.")
         return {"error": "SEMAPHORE_API_KEY not set"}
 
-    sender_name = getattr(settings, "SEMAPHORE_SENDER_NAME", "GeoMktcs")
+    sender_name = getattr(settings, "SEMAPHORE_SENDER_NAME", "ePalengke")
 
     # Normalize number format
     number = number.strip().replace(" ", "").replace("-", "")

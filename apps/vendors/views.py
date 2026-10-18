@@ -5,7 +5,14 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Count, Q
 from .models import MarketSection, Stall, Vendor
-from .serializers import MarketSectionSerializer, StallListSerializer, StallDetailSerializer, VendorSerializer, VendorPublicSerializer
+from .serializers import (
+    MarketSectionSerializer,
+    StallListSerializer,
+    StallDetailSerializer,
+    StallPublicDetailSerializer,
+    VendorSerializer,
+    VendorPublicSerializer,
+)
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -38,7 +45,10 @@ class StallViewSet(viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
-            return StallDetailSerializer
+            user = self.request.user
+            if user.is_authenticated and getattr(user, 'role', None) == 'admin':
+                return StallDetailSerializer
+            return StallPublicDetailSerializer
         return StallListSerializer
 
     def get_permissions(self):

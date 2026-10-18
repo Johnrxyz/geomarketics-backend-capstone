@@ -77,6 +77,45 @@ class StallDetailSerializer(serializers.ModelSerializer):
         return None
 
 
+class StallPublicDetailSerializer(serializers.ModelSerializer):
+    """Explicit public allowlist for anonymous and non-admin stall details."""
+    section_name = serializers.CharField(source='section.name', read_only=True)
+    section_code = serializers.CharField(source='section.code', read_only=True)
+    vendor_name = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+    svg_x = serializers.IntegerField(source='map_x', read_only=True, allow_null=True)
+    svg_y = serializers.IntegerField(source='map_y', read_only=True, allow_null=True)
+    occupancy_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Stall
+        fields = [
+            'id', 'stall_number', 'section', 'section_name', 'section_code',
+            'category', 'status', 'area_sqm', 'monthly_rent', 'vendor_name',
+            'building', 'floor', 'svg_cell_id', 'svg_x', 'svg_y',
+            'map_width', 'map_height', 'occupancy_status', 'vendor',
+        ]
+
+    def get_vendor_name(self, obj):
+        return obj.vendor.full_name if hasattr(obj, 'vendor') and obj.vendor else None
+
+    def get_vendor(self, obj):
+        if hasattr(obj, 'vendor') and obj.vendor:
+            return VendorPublicSerializer(obj.vendor).data
+        return None
+
+    def get_occupancy_status(self, obj):
+        status_map = {
+            'owner': 'occupied',
+            'rented': 'occupied',
+            'storage': 'storage',
+            'surrendered_bolante': 'surrendered',
+            'vacant': 'vacant',
+            'closed': 'closed',
+        }
+        return status_map.get(obj.status, 'vacant')
+
+
 class VendorSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     stall_number = serializers.CharField(source='stall.stall_number', read_only=True)

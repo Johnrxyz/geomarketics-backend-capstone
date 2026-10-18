@@ -47,7 +47,7 @@ INSTALLED_APPS = [
     'apps.documents',
     'apps.prices',
     'apps.violations',
-    # Local apps — GeoMarketics
+    # Local apps — e-Palengke
     'apps.markets',
     'apps.ingestion',
 ]
@@ -179,4 +179,4 @@ else:
 # Set SEMAPHORE_API_KEY in your .env file.
 # SEMAPHORE_SENDER_NAME must be registered with Semaphore (max 11 chars).
 SEMAPHORE_API_KEY = env('SEMAPHORE_API_KEY', '')
-SEMAPHORE_SENDER_NAME = env('SEMAPHORE_SENDER_NAME', 'GeoMktcs')
+SEMAPHORE_SENDER_NAME = env('SEMAPHORE_SENDER_NAME', 'ePalengke')
