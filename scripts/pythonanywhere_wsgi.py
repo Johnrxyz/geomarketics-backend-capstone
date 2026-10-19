@@ -26,9 +26,11 @@ env_path = os.path.join(path, '.env')
 if os.path.exists(env_path):
     load_dotenv(env_path)
 
-# 4. Set the Django settings module
-# We use 'core.settings' because that's where your settings.py is located
-os.environ['DJANGO_SETTINGS_MODULE'] = 'core.settings'
+# 4. Use the production-safe pilot settings.
+# The required values are loaded from the private backend .env above or from
+# the PythonAnywhere process environment. Pilot settings fail closed when
+# SECRET_KEY, ALLOWED_HOSTS, or CORS_ALLOWED_ORIGINS are missing or invalid.
+os.environ['DJANGO_SETTINGS_MODULE'] = 'core.settings.pilot'
 
 # 5. Initialize the WSGI application
 from django.core.wsgi import get_wsgi_application

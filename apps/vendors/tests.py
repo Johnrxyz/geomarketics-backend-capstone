@@ -11,6 +11,8 @@ Covers:
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
+from unittest.mock import patch
+import logging
 
 from apps.users.models import User
 from apps.vendors.models import MarketSection, Stall, Vendor
@@ -235,3 +237,142 @@ class StallDetailPrivacyTest(TestCase):
         self.assertEqual(data['vendor']['address'], 'Private residential address')
         self.assertEqual(data['vendor']['permit_number'], 'PRIVATE-PERMIT-001')
         self.assertEqual(data['vendor']['user_id'], self.owner_user.pk)
+
+
+class VendorOnboardingTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.section = _create_section()
+        self.admin = User.objects.create_user(username='onboard_admin', password='admin-pass-123', role='admin')
+        self.vendor = Vendor.objects.create(first_name='Mila', last_name='Reyes', email='', phone='09170000000')
+
+    def test_vendor_creation_without_account_preserves_existing_flow(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post('/api/v1/vendors/', {
+            'first_name': 'Ana', 'last_name': 'Santos', 'stall': _create_stall(self.section, 'T-NEW').pk,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        vendor = Vendor.objects.get(pk=response.json()['id'])
+        self.assertIsNone(vendor.user_id)
+        self.assertEqual(response.json()['account_status'], 'no_account')
+        self.assertNotIn('credentials', response.json())
+
+    def test_create_vendor_with_account_returns_single_use_credentials_and_links_vendor_role(self):
+        self.client.force_authenticate(self.admin)
+        captured_logs = []
+        class CaptureLogs(logging.Handler):
+            def emit(self, record):
+                captured_logs.append(self.format(record))
+        handler = CaptureLogs()
+        logging.getLogger().addHandler(handler)
+        try:
+            response = self.client.post('/api/v1/vendors/', {
+                'first_name': 'Ana', 'last_name': 'Santos', 'stall': _create_stall(self.section, 'T-LOGIN').pk,
+                'create_account': True,
+            }, format='json')
+        finally:
+            logging.getLogger().removeHandler(handler)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        linked = Vendor.objects.get(pk=data['id']).user
+        self.assertEqual(linked.role, User.ROLE_VENDOR)
+        self.assertEqual(linked.vendor_profile.pk, data['id'])
+        self.assertTrue(linked.must_change_password)
+        self.assertTrue(linked.check_password(data['credentials']['temporary_password']))
+        self.assertNotEqual(linked.password, data['credentials']['temporary_password'])
+        self.assertEqual(data['account_status'], 'pending_setup')
+        self.assertEqual(linked.email, '')
+        detail = self.client.get(f"/api/v1/vendors/{data['id']}/")
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertNotIn('credentials', detail.json())
+        self.assertNotIn(data['credentials']['temporary_password'], str(detail.json()))
+        self.assertNotIn(data['credentials']['temporary_password'], linked.password)
+        listing = self.client.get('/api/v1/vendors/')
+        self.assertNotIn(data['credentials']['temporary_password'], str(listing.json()))
+        self.assertNotIn('credentials', listing.json()['results'][0])
+        self.assertNotIn(data['credentials']['temporary_password'], '\n'.join(captured_logs))
+
+    def test_existing_vendor_provisioning_and_duplicate_prevention(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f'/api/v1/vendors/{self.vendor.pk}/create-account/', {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.vendor.refresh_from_db()
+        self.assertEqual(self.vendor.user.role, User.ROLE_VENDOR)
+        self.assertEqual(response.json()['vendor']['account_status'], 'pending_setup')
+        duplicate = self.client.post(f'/api/v1/vendors/{self.vendor.pk}/create-account/', {}, format='json')
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unauthorized_user_cannot_create_vendor_account(self):
+        customer = User.objects.create_user(username='onboard_customer', password='customer-pass-123', role='customer')
+        self.client.force_authenticate(customer)
+        response = self.client.post(f'/api/v1/vendors/{self.vendor.pk}/create-account/', {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.vendor.refresh_from_db()
+        self.assertIsNone(self.vendor.user_id)
+
+    def test_account_creation_rolls_back_vendor_and_user_on_link_failure(self):
+        self.client.force_authenticate(self.admin)
+        original_save = Vendor.save
+        def fail_account_link(instance, *args, **kwargs):
+            if instance.user_id:
+                raise RuntimeError('simulated linking failure')
+            return original_save(instance, *args, **kwargs)
+        with patch.object(Vendor, 'save', fail_account_link):
+            with self.assertRaises(RuntimeError):
+                self.client.post('/api/v1/vendors/', {
+                    'first_name': 'Rollback', 'last_name': 'Vendor', 'stall': _create_stall(self.section, 'T-ROLL').pk,
+                    'create_account': True,
+                }, format='json')
+        self.assertFalse(Vendor.objects.filter(first_name='Rollback').exists())
+        self.assertFalse(User.objects.filter(first_name='Rollback').exists())
+
+
+class FirstLoginPasswordSetupTest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='pending-vendor', password='Temp-Strong-995!x', role='vendor', must_change_password=True)
+        self.section = _create_section()
+        self.vendor = Vendor.objects.create(user=self.user, first_name='Pending', last_name='Vendor')
+
+    def test_temporary_password_login_is_marked_and_normal_vendor_api_is_blocked(self):
+        response = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Temp-Strong-995!x'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()['must_change_password'])
+        self.assertNotIn('Temp-Strong-995!x', str(response.json()))
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.json()['access']}")
+        self.assertEqual(self.client.get('/api/v1/vendors/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get('/api/v1/auth/me/').status_code, status.HTTP_200_OK)
+
+    def test_password_setup_clears_gate_and_allows_vendor_api(self):
+        response = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Temp-Strong-995!x'}, format='json')
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.json()['access']}")
+        changed = self.client.post('/api/v1/auth/setup-password/', {'new_password': 'Vendor-New-Secure-448!'}, format='json')
+        self.assertEqual(changed.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
+        self.assertTrue(self.user.check_password('Vendor-New-Secure-448!'))
+        self.assertEqual(self.client.get('/api/v1/vendors/').status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(self.client.post('/api/v1/auth/refresh/', {'refresh': response.json()['refresh']}, format='json').status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.credentials()
+        new_login = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Vendor-New-Secure-448!'}, format='json')
+        self.assertEqual(new_login.status_code, status.HTTP_200_OK)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {new_login.json()['access']}")
+        self.assertEqual(self.client.get('/api/v1/vendors/').status_code, status.HTTP_200_OK)
+
+    def test_refresh_token_does_not_bypass_setup_gate(self):
+        response = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Temp-Strong-995!x'}, format='json')
+        refreshed = self.client.post('/api/v1/auth/refresh/', {'refresh': response.json()['refresh']}, format='json')
+        self.assertEqual(refreshed.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.json()['access']}")
+        self.assertEqual(self.client.get('/api/v1/vendors/').status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_existing_access_session_is_gated_when_setup_is_required(self):
+        response = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Temp-Strong-995!x'}, format='json')
+        self.user.must_change_password = False
+        self.user.save(update_fields=['must_change_password'])
+        established = self.client.post('/api/v1/auth/login/', {'username': self.user.username, 'password': 'Temp-Strong-995!x'}, format='json')
+        self.user.must_change_password = True
+        self.user.save(update_fields=['must_change_password'])
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {established.json()['access']}")
+        self.assertEqual(self.client.get('/api/v1/vendors/').status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

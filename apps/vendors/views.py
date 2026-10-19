@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Count, Q
+from django.db import transaction
+from django.utils.text import slugify
+import secrets
 from .models import MarketSection, Stall, Vendor
 from .serializers import (
     MarketSectionSerializer,
@@ -168,8 +171,56 @@ class VendorViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
+            from apps.users.permissions import PasswordSetupPermission
+            return [PasswordSetupPermission()]
         return [IsAdminRole()]
+
+    def _create_login_account(self, vendor):
+        if vendor.user_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'account': 'This vendor already has a linked login account.'})
+        from apps.users.models import User
+        base = slugify(f'{vendor.first_name}.{vendor.last_name}').replace('-', '.') or 'vendor'
+        while True:
+            username = f'{base}.{secrets.token_hex(3)}'
+            if not User.objects.filter(username__iexact=username).exists():
+                break
+        temporary_password = secrets.token_urlsafe(18)
+        user = User(
+            username=username,
+            email=vendor.email.strip(),
+            first_name=vendor.first_name,
+            last_name=vendor.last_name,
+            phone=vendor.phone,
+            role=User.ROLE_VENDOR,
+            must_change_password=True,
+        )
+        user.set_password(temporary_password)
+        user.save()
+        vendor.user = user
+        vendor.save(update_fields=['user', 'updated_at'])
+        return {'username': username, 'temporary_password': temporary_password}
+
+    def create(self, request, *args, **kwargs):
+        create_account = request.data.get('create_account', False)
+        if isinstance(create_account, str):
+            create_account = create_account.lower() in ('true', '1', 'yes')
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            vendor = serializer.save()
+            credentials = self._create_login_account(vendor) if create_account else None
+        data = self.get_serializer(vendor).data
+        if credentials:
+            data['credentials'] = credentials
+        return Response(data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='create-account', permission_classes=[IsAdminRole])
+    def create_account(self, request, pk=None):
+        with transaction.atomic():
+            vendor = self.get_object()
+            credentials = self._create_login_account(vendor)
+        return Response({'vendor': self.get_serializer(vendor).data, 'credentials': credentials}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'], url_path='compliance-history')
     def compliance_history(self, request, pk=None):

@@ -1,8 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
 
-from apps.users.views import UserViewSet, LoginView, LogoutView, MeView
+from apps.users.views import UserViewSet, LoginView, LogoutView, MeView, SetupPasswordView, SetupAwareTokenRefreshView
 from apps.vendors.views import MarketSectionViewSet, StallViewSet, VendorViewSet
 from apps.complaints.views import ComplaintViewSet, BlotterViewSet
 from apps.documents.views import DocumentViewSet
@@ -40,8 +39,9 @@ router.register(r'accomplishment-reports', AccomplishmentReportViewSet, basename
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
-    path('auth/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('auth/refresh/', SetupAwareTokenRefreshView.as_view(), name='token-refresh'),
     path('auth/me/', MeView.as_view(), name='me'),
+    path('auth/setup-password/', SetupPasswordView.as_view(), name='setup-password'),
     path('analytics/dashboard/', DashboardView.as_view(), name='dashboard'),
     path('analytics/reports/', ReportsView.as_view(), name='reports'),
     path('public/stats/', PublicStatsView.as_view(), name='public-stats'),

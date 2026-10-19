@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from .storage import private_document_storage
 
 
 class Document(models.Model):
@@ -60,7 +61,7 @@ class Document(models.Model):
     )
     document_type = models.CharField(max_length=30, choices=TYPE_CHOICES)
     title = models.CharField(max_length=200)
-    file = models.FileField(upload_to='documents/', null=True, blank=True)
+    file = models.FileField(upload_to='documents/', storage=private_document_storage, null=True, blank=True)
     file_size = models.CharField(max_length=20, blank=True)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_INCOMPLETE)
     expiry_date = models.DateField(null=True, blank=True)
@@ -93,7 +94,7 @@ class Document(models.Model):
 
 class DocumentPage(models.Model):
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='pages')
-    file = models.FileField(upload_to='documents/pages/')
+    file = models.FileField(upload_to='documents/pages/', storage=private_document_storage)
     raw_ocr_text = models.TextField(blank=True)
     page_upload_order = models.IntegerField()
     detected_page_number = models.IntegerField(null=True, blank=True)
@@ -108,6 +109,17 @@ class DocumentPage(models.Model):
 
     def __str__(self):
         return f"Page {self.detected_page_number} of {self.document}"
+
+
+class DocumentReview(models.Model):
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='review_history')
+    status = models.CharField(max_length=30, choices=Document.STATUS_CHOICES)
+    notes = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['reviewed_at', 'id']
 
 
 class ComplianceSignal(models.Model):

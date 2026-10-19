@@ -124,6 +124,7 @@ class VendorSerializer(serializers.ModelSerializer):
     stall_status = serializers.CharField(source='stall.status', read_only=True)
     products_list = serializers.ListField(read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
+    account_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Vendor
@@ -131,8 +132,13 @@ class VendorSerializer(serializers.ModelSerializer):
                   'address', 'stall', 'stall_number', 'section_name', 'section_code',
                   'stall_status', 'products', 'products_list', 'permit_number',
                   'permit_expiry', 'health_cert_expiry', 'is_active',
-                  'compliance_rate', 'joined_at', 'created_at']
+                  'compliance_rate', 'joined_at', 'created_at', 'account_status']
         read_only_fields = ['id', 'created_at', 'compliance_rate']
+
+    def get_account_status(self, obj):
+        if not obj.user_id:
+            return 'no_account'
+        return 'pending_setup' if obj.user.must_change_password else 'active'
 
 
 class VendorPublicSerializer(serializers.ModelSerializer):

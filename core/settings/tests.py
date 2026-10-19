@@ -1,7 +1,9 @@
 """Focused validation tests for the production-safe pilot settings."""
 
 from django.core.exceptions import ImproperlyConfigured
+from django.conf import settings
 from django.test import SimpleTestCase
+import os
 
 from ._pilot_validation import (
     parse_allowed_hosts,
@@ -61,7 +63,9 @@ class PilotSettingsValidationTests(SimpleTestCase):
         from . import dev, pilot
 
         self.assertEqual(pilot.DATABASES["default"]["ENGINE"], dev.DATABASES["default"]["ENGINE"])
-        self.assertEqual(pilot.PILOT_DATABASE_PATH, dev.DATABASES["default"]["NAME"])
+        # Django's test runner rewrites dev.DATABASES['default']['NAME'] to an
+        # in-memory URI, so compare with the configured project path instead.
+        self.assertEqual(pilot.PILOT_DATABASE_PATH, dev.BASE_DIR / "db.sqlite3")
         self.assertEqual(pilot.PILOT_TEST_DATABASE_NAME, ":memory:")
         self.assertFalse(pilot.DEBUG)
 
@@ -73,3 +77,22 @@ class PilotSettingsValidationTests(SimpleTestCase):
         self.assertIsNone(pilot.SECURE_PROXY_SSL_HEADER)
         self.assertFalse(pilot.SECURE_SSL_REDIRECT)
         self.assertFalse(pilot.CORS_ALLOW_ALL_ORIGINS)
+
+
+class TestStorageIsolationTests(SimpleTestCase):
+    def test_default_test_run_uses_temporary_local_storage_without_cloudinary_credentials(self):
+        self.assertEqual(settings.DOCUMENT_STORAGE_BACKEND, 'local')
+        self.assertEqual(settings.CLOUDINARY_STORAGE, {
+            'CLOUD_NAME': '',
+            'API_KEY': '',
+            'API_SECRET': '',
+        })
+        self.assertEqual(
+            settings.STORAGES['default']['BACKEND'],
+            'django.core.files.storage.FileSystemStorage',
+        )
+        self.assertIn('epalengke-tests-', str(settings.PRIVATE_DOCUMENT_ROOT))
+        self.assertEqual(os.environ.get('CLOUDINARY_URL'), '')
+        self.assertEqual(os.environ.get('CLOUDINARY_CLOUD_NAME'), '')
+        self.assertEqual(os.environ.get('CLOUDINARY_API_KEY'), '')
+        self.assertEqual(os.environ.get('CLOUDINARY_API_SECRET'), '')

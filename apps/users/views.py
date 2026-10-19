@@ -3,9 +3,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 from django.utils import timezone
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from .models import User
-from .serializers import UserSerializer, UserCreateSerializer, LoginSerializer, ChangePasswordSerializer
+from .serializers import UserSerializer, UserCreateSerializer, LoginSerializer, ChangePasswordSerializer, SetupAwareTokenRefreshSerializer
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -25,7 +28,29 @@ class LoginView(APIView):
             'access': str(refresh.access_token),
             'refresh': str(refresh),
             'user': UserSerializer(user).data,
+            'must_change_password': user.must_change_password,
         })
+
+
+class SetupPasswordView(APIView):
+    """Allow a vendor using an admin-issued temporary password to finish setup."""
+    def post(self, request):
+        user = request.user
+        if not user.must_change_password:
+            return Response({'detail': 'Password setup is not required.'}, status=status.HTTP_400_BAD_REQUEST)
+        new_password = request.data.get('new_password', '')
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as exc:
+            return Response({'new_password': list(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save(update_fields=['password', 'must_change_password', 'updated_at'])
+        return Response({'detail': 'Password set. Please sign in again.'})
+
+
+class SetupAwareTokenRefreshView(TokenRefreshView):
+    serializer_class = SetupAwareTokenRefreshSerializer
 
 
 class LogoutView(APIView):
@@ -45,6 +70,12 @@ class MeView(APIView):
         return Response(UserSerializer(request.user).data)
 
     def patch(self, request):
+        protected_fields = {'role', 'is_active', 'must_change_password'} & set(request.data.keys())
+        if protected_fields:
+            return Response(
+                {'detail': 'Account role and status cannot be changed through this endpoint.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()

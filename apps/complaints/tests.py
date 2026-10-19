@@ -9,14 +9,21 @@ Covers:
 - Admin status update (complaint workflow)
 """
 
-from django.test import TestCase
+from pathlib import Path
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from requests import Response as RequestsResponse
 from rest_framework.test import APIClient
 from rest_framework import status
 
 from apps.users.models import User
-from apps.vendors.models import MarketSection, Stall
+from apps.vendors.models import MarketSection, Stall, Vendor
 from apps.complaints.models import Complaint
+from apps.documents.storage import private_complaint_evidence_storage
 
 
 class ComplaintPublicSubmitTest(TestCase):
@@ -205,6 +212,38 @@ class ComplaintAdminWorkflowTest(TestCase):
         response = self.client.patch(url, {'status': 'invalid_status'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_generic_admin_status_update_notifies_customer_with_valid_route(self):
+        self.complaint.complainant = self.customer
+        self.complaint.save(update_fields=['complainant'])
+        self._login('admin_wf', 'adminwf123')
+
+        response = self.client.patch(
+            f'/api/v1/complaints/{self.complaint.pk}/', {'status': 'reviewing'}, format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        notice = self.customer.notifications.get(title='Complaint Status Updated')
+        self.assertEqual(notice.link, '/complaints')
+
+    def test_status_and_notification_write_roll_back_together(self):
+        self.complaint.complainant = self.customer
+        self.complaint.save(update_fields=['complainant'])
+        self._login('admin_wf', 'adminwf123')
+
+        with patch(
+            'apps.complaints.views.Notification.objects.create',
+            side_effect=IntegrityError('forced notice failure'),
+        ):
+            with self.assertRaises(IntegrityError):
+                self.client.patch(
+                    f'/api/v1/complaints/{self.complaint.pk}/',
+                    {'status': 'reviewing'}, format='json',
+                )
+
+        self.complaint.refresh_from_db()
+        self.assertEqual(self.complaint.status, 'open')
+        self.assertFalse(self.customer.notifications.exists())
+
 
 class ComplaintPrivacyTest(TestCase):
     """
@@ -306,4 +345,284 @@ class ComplaintPrivacyTest(TestCase):
         self.assertEqual(stored.complainant_contact, 'anon@example.com')
         # Verify full complainant serializer is not returned on create
         self.assertNotIn('complainant', data)
+
+
+@override_settings(DOCUMENT_STORAGE_BACKEND='local')
+class ComplaintEvidenceStorageTests(TestCase):
+    url = '/api/v1/complaints/'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(username='evidence_admin', password='Admin-pass-123!', role='admin')
+        self.customer = User.objects.create_user(username='evidence_owner', password='Owner-pass-123!', role='customer')
+        self.other_customer = User.objects.create_user(username='evidence_other', password='Other-pass-123!', role='customer')
+        self.vendor_user = User.objects.create_user(username='evidence_vendor', password='Vendor-pass-123!', role='vendor')
+        self.other_vendor_user = User.objects.create_user(username='evidence_other_vendor', password='Other-vendor-123!', role='vendor')
+        self.vendor = Vendor.objects.create(user=self.vendor_user, first_name='Target', last_name='Vendor')
+        self.other_vendor = Vendor.objects.create(user=self.other_vendor_user, first_name='Unrelated', last_name='Vendor')
+
+    def tearDown(self):
+        for complaint in Complaint.objects.all():
+            evidence = complaint.evidence_file
+            if evidence and evidence.name and not evidence.name.startswith('cloudinary/'):
+                private_complaint_evidence_storage.delete(evidence.name)
+
+    @staticmethod
+    def _png(name='evidence.png', content=b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDRsynthetic'):
+        return SimpleUploadedFile(name, content, content_type='image/png')
+
+    @staticmethod
+    def _jpeg(name='evidence.jpg'):
+        return SimpleUploadedFile(name, b'\xff\xd8\xff\xe0synthetic-jpeg\xff\xd9', content_type='image/jpeg')
+
+    def _payload(self, file=None):
+        payload = {
+            'category': 'safety',
+            'subject': 'Synthetic evidence report',
+            'description': 'A synthetic complaint used for storage tests.',
+        }
+        if file:
+            payload['evidence_file'] = file
+        return payload
+
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_anonymous_upload_is_private_and_admin_can_retrieve(self, _sms):
+        created = self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.content)
+        evidence_url = created.data['evidence_file']
+        self.assertIn(f'/api/v1/complaints/{created.data["id"]}/evidence/', evidence_url)
+        self.assertNotIn('cloudinary', evidence_url.lower())
+        complaint = Complaint.objects.get(pk=created.data['id'])
+        self.assertRegex(complaint.evidence_file.name, r'^complaints/[0-9a-f]{32}\.png$')
+
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get(evidence_url).status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.force_authenticate(self.admin)
+        preview = self.client.get(evidence_url)
+        self.assertEqual(preview.status_code, status.HTTP_200_OK)
+        self.assertEqual(preview['Content-Type'], 'image/png')
+        self.assertEqual(preview['Cache-Control'], 'private, no-store')
+        self.assertEqual(b''.join(preview.streaming_content), b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDRsynthetic')
+
+    def test_owner_target_vendor_and_admin_can_access_unrelated_users_cannot(self):
+        complaint = Complaint.objects.create(
+            complainant=self.customer,
+            vendor=self.vendor,
+            category='safety',
+            subject='Owned evidence report',
+            description='Synthetic evidence.',
+            evidence_file=self._png('owner-evidence.png'),
+        )
+        endpoint = f'{self.url}{complaint.pk}/evidence/'
+
+        self.client.force_authenticate(self.customer)
+        self.assertEqual(self.client.get(endpoint).status_code, status.HTTP_200_OK)
+        self.client.force_authenticate(self.vendor_user)
+        self.assertEqual(self.client.get(endpoint).status_code, status.HTTP_200_OK)
+        vendor_owned = Complaint.objects.create(
+            complainant=self.vendor_user,
+            vendor=self.other_vendor,
+            category='safety',
+            subject='Vendor-owned report',
+            description='Synthetic vendor-owned evidence.',
+            evidence_file=self._png('vendor-owned-evidence.png'),
+        )
+        own_list = self.client.get(f'{self.url}?complainant={self.vendor_user.pk}')
+        self.assertEqual(own_list.status_code, status.HTTP_200_OK)
+        own_results = own_list.json().get('results', own_list.json())
+        self.assertEqual({item['id'] for item in own_results}, {vendor_owned.pk})
+        self.assertEqual(self.client.get(f'{self.url}{vendor_owned.pk}/evidence/').status_code, status.HTTP_200_OK)
+        self.client.force_authenticate(self.other_customer)
+        self.assertEqual(self.client.get(endpoint).status_code, status.HTTP_404_NOT_FOUND)
+        self.client.force_authenticate(self.other_vendor_user)
+        self.assertEqual(self.client.get(endpoint).status_code, status.HTTP_404_NOT_FOUND)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(endpoint).status_code, status.HTTP_200_OK)
+
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_unsupported_and_signature_mismatch_uploads_are_rejected(self, _sms):
+        unsupported = self.client.post(self.url, self._payload(SimpleUploadedFile('evidence.svg', b'<svg/>')), format='multipart')
+        mismatch = self.client.post(self.url, self._payload(SimpleUploadedFile('evidence.png', b'not a png')), format='multipart')
+        self.assertEqual(unsupported.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('evidence_file', unsupported.data)
+        self.assertEqual(mismatch.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('evidence_file', mismatch.data)
+        self.assertEqual(Complaint.objects.count(), 0)
+
+    @override_settings(DOCUMENT_MAX_UPLOAD_BYTES=8)
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_upload_size_limit_is_enforced(self, _sms):
+        response = self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('evidence_file', response.data)
+        self.assertEqual(Complaint.objects.count(), 0)
+
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_legacy_media_evidence_remains_readable(self, _sms):
+        import tempfile
+        from django.test import override_settings as temporary_settings
+
+        cloud_settings = {
+            'DOCUMENT_STORAGE_BACKEND': 'cloudinary',
+            'CLOUDINARY_STORAGE': {
+                'CLOUD_NAME': 'pilot-test-cloud',
+                'API_KEY': 'test-api-key-only',
+                'API_SECRET': 'test-api-secret-only',
+            },
+        }
+        with tempfile.TemporaryDirectory() as media_root, temporary_settings(MEDIA_ROOT=media_root, **cloud_settings):
+            legacy_path = Path(media_root) / 'complaints' / 'legacy-evidence.png'
+            legacy_path.parent.mkdir(parents=True)
+            legacy_path.write_bytes(b'legacy synthetic evidence')
+            complaint = Complaint.objects.create(
+                category='safety', subject='Legacy evidence', description='Existing file.',
+                evidence_file='complaints/legacy-evidence.png',
+            )
+            self.client.force_authenticate(self.admin)
+            response = self.client.get(f'{self.url}{complaint.pk}/evidence/')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(b''.join(response.streaming_content), b'legacy synthetic evidence')
+            self.assertEqual(self.client.get('/media/complaints/legacy-evidence.png').status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_database_rollback_deletes_uploaded_local_evidence(self, _sms):
+        with patch.object(private_complaint_evidence_storage, 'delete', wraps=private_complaint_evidence_storage.delete) as delete_file:
+            with patch('apps.complaints.views.Notification.objects.create', side_effect=IntegrityError('forced notification failure')):
+                with self.assertRaises(IntegrityError):
+                    self.client.post(self.url, self._payload(self._png('rollback-evidence.png')), format='multipart')
+        self.assertEqual(Complaint.objects.count(), 0)
+        delete_file.assert_called_once()
+        stored_name = delete_file.call_args.args[0]
+        self.assertFalse(private_complaint_evidence_storage.exists(stored_name))
+
+
+@override_settings(
+    DOCUMENT_STORAGE_BACKEND='cloudinary',
+    CLOUDINARY_STORAGE={
+        'CLOUD_NAME': 'pilot-test-cloud',
+        'API_KEY': 'test-api-key-only',
+        'API_SECRET': 'test-api-secret-only',
+    },
+)
+class CloudinaryComplaintEvidenceTests(TestCase):
+    url = '/api/v1/complaints/'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(username='cloud_evidence_admin', password='Admin-pass-123!', role='admin')
+
+    @staticmethod
+    def _png(name='evidence.png', content=b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDRsynthetic'):
+        return SimpleUploadedFile(name, content, content_type='image/png')
+
+    @staticmethod
+    def _jpeg(name='evidence.jpg'):
+        return SimpleUploadedFile(name, b'\xff\xd8\xff\xe0synthetic-jpeg\xff\xd9', content_type='image/jpeg')
+
+    def _payload(self, file=None):
+        payload = {
+            'category': 'safety',
+            'subject': 'Synthetic evidence report',
+            'description': 'A synthetic complaint used for storage tests.',
+        }
+        if file:
+            payload['evidence_file'] = file
+        return payload
+
+    @staticmethod
+    def _successful_upload(content, **options):
+        return {
+            'public_id': options['public_id'],
+            'type': options['type'],
+            'resource_type': options['resource_type'],
+            'format': 'png',
+        }
+
+    @patch('apps.complaints.views.notify_admins_sms')
+    @patch('apps.documents.storage.cloudinary_uploader.upload')
+    def test_supported_files_use_private_complaint_folder_and_random_asset_ids(self, upload, _sms):
+        upload.side_effect = self._successful_upload
+        files = [
+            self._png('vendor-name-evidence.png'),
+            self._jpeg('vendor-name-evidence.jpg'),
+            SimpleUploadedFile('vendor-name-evidence.pdf', b'%PDF-1.4\nsynthetic\n%%EOF', content_type='application/pdf'),
+        ]
+        stored_names = []
+        for file_obj in files:
+            response = self.client.post(self.url, self._payload(file_obj), format='multipart')
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+            complaint = Complaint.objects.get(pk=response.data['id'])
+            stored_names.append(complaint.evidence_file.name)
+            suffix = Path(file_obj.name).suffix.lstrip('.')
+            self.assertRegex(
+                complaint.evidence_file.name,
+                rf'^cloudinary/epalengke_complaints/[0-9a-f]{{32}}\.{suffix}$',
+            )
+            self.assertNotIn('vendor-name', complaint.evidence_file.name)
+            self.assertIn('/api/v1/complaints/', response.data['evidence_file'])
+            self.assertNotIn('cloudinary', response.data['evidence_file'].lower())
+            self.assertNotIn('secure_url', response.data)
+            self.assertNotIn('test-api-secret-only', response.content.decode())
+            self.assertNotIn('test-api-key-only', response.content.decode())
+        self.assertEqual(upload.call_count, 3)
+        self.assertTrue(all(call.kwargs['type'] == 'authenticated' for call in upload.call_args_list))
+        self.assertTrue(all(call.kwargs['resource_type'] == 'image' for call in upload.call_args_list))
+        self.assertEqual(len(set(stored_names)), 3)
+
+    @patch('apps.documents.storage.requests.get')
+    @patch('apps.documents.storage.cloudinary_utils.private_download_url', return_value='https://api.cloudinary.test/private')
+    @patch('apps.documents.storage.cloudinary_uploader.upload')
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_admin_retrieval_uses_authenticated_delivery_and_returns_original_bytes(self, _sms, upload, signed_url, remote_get):
+        upload.side_effect = self._successful_upload
+        remote = RequestsResponse()
+        remote.status_code = 200
+        remote._content = b'\x89PNG\r\n\x1a\nsynthetic cloud bytes'
+        remote.headers['Content-Type'] = 'image/png'
+        remote_get.return_value = remote
+        created = self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.content)
+
+        self.client.force_authenticate(self.admin)
+        retrieved = self.client.get(created.data['evidence_file'])
+        self.assertEqual(retrieved.status_code, status.HTTP_200_OK)
+        self.assertEqual(b''.join(retrieved.streaming_content), remote._content)
+        self.assertEqual(signed_url.call_args.kwargs['type'], 'authenticated')
+        self.assertEqual(signed_url.call_args.kwargs['resource_type'], 'image')
+        remote_get.assert_called_once()
+
+    @patch('apps.documents.storage.cloudinary_uploader.destroy')
+    @patch('apps.documents.storage.cloudinary_uploader.upload', side_effect=TimeoutError('simulated provider timeout'))
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_cloudinary_failure_returns_service_unavailable_without_local_fallback(self, _sms, upload, destroy):
+        response = self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(Complaint.objects.count(), 0)
+        upload.assert_called_once()
+        destroy.assert_called_once()
+
+    @patch('apps.documents.storage.cloudinary_uploader.upload')
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_missing_cloudinary_credentials_fail_closed(self, _sms, upload):
+        with self.settings(CLOUDINARY_STORAGE={'CLOUD_NAME': '', 'API_KEY': '', 'API_SECRET': ''}):
+            response = self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(Complaint.objects.count(), 0)
+        upload.assert_not_called()
+
+    @patch('apps.documents.storage.cloudinary_uploader.destroy')
+    @patch('apps.documents.storage.cloudinary_uploader.upload')
+    @patch('apps.complaints.views.Notification.objects.create', side_effect=IntegrityError('forced notification failure'))
+    @patch('apps.complaints.views.notify_admins_sms')
+    def test_transaction_rollback_cleans_up_cloudinary_asset(self, _sms, _notification, upload, destroy):
+        upload.side_effect = self._successful_upload
+        with self.assertRaises(IntegrityError):
+            self.client.post(self.url, self._payload(self._png()), format='multipart')
+        self.assertEqual(Complaint.objects.count(), 0)
+        destroy.assert_called_once()
+        self.assertEqual(destroy.call_args.kwargs['type'], 'authenticated')
+
+    def tearDown(self):
+        # Cloudinary calls are mocked; no remote cleanup is required.
+        pass
 

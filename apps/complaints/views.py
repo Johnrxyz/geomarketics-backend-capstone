@@ -1,3 +1,9 @@
+import logging
+import mimetypes
+from pathlib import Path
+
+from django.db import transaction
+from django.http import FileResponse
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,8 +16,10 @@ from .serializers import ComplaintSerializer, ComplaintVendorSerializer, Complai
 from apps.notifications.models import Notification
 from django.contrib.auth import get_user_model
 from utils.sms import notify_admins_sms
+from apps.documents.storage import DocumentStorageUnavailable
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class IsAdminRole(permissions.BasePermission):
@@ -21,7 +29,7 @@ class IsAdminRole(permissions.BasePermission):
 
 class ComplaintViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'category', 'vendor', 'stall', 'is_flagged_spam']
+    filterset_fields = ['status', 'category', 'vendor', 'stall', 'complainant', 'is_flagged_spam']
     search_fields = ['complaint_number', 'subject', 'description', 'complainant_name',
                      'vendor__first_name', 'vendor__last_name', 'stall__stall_number']
     ordering_fields = ['created_at', 'status', 'category']
@@ -31,7 +39,8 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         qs = Complaint.objects.select_related('vendor', 'stall', 'complainant').all()
         if user.role == 'vendor':
             try:
-                return qs.filter(vendor=user.vendor_profile)
+                from django.db.models import Q
+                return qs.filter(Q(vendor=user.vendor_profile) | Q(complainant=user))
             except Exception:
                 return qs.none()
         if user.role == 'customer':
@@ -52,6 +61,52 @@ class ComplaintViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update', 'destroy']:
             return [IsAdminRole()]
         return [permissions.IsAuthenticated()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            self.perform_create(serializer)
+        except DocumentStorageUnavailable:
+            return Response(
+                {'detail': 'Evidence storage is unavailable. No public or local fallback was used.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=['get'], url_path='evidence', url_name='evidence')
+    def evidence(self, request, pk=None):
+        complaint = self.get_object()
+        user = request.user
+        is_admin = getattr(user, 'role', None) == 'admin'
+        is_complainant = complaint.complainant_id == user.pk
+        is_target_vendor = False
+        if getattr(user, 'role', None) == 'vendor':
+            try:
+                is_target_vendor = complaint.vendor_id == user.vendor_profile.pk
+            except Exception:
+                is_target_vendor = False
+        if not (is_admin or is_complainant or is_target_vendor):
+            return Response({'detail': 'You do not have permission to access this evidence.'}, status=403)
+
+        evidence = complaint.evidence_file
+        if not evidence:
+            return Response({'detail': 'Complaint evidence not found.'}, status=404)
+        try:
+            file_handle = evidence.open('rb')
+        except FileNotFoundError:
+            return Response({'detail': 'Complaint evidence not found.'}, status=404)
+        except DocumentStorageUnavailable:
+            return Response({'detail': 'Complaint evidence storage is temporarily unavailable.'}, status=503)
+
+        content_type = mimetypes.guess_type(Path(evidence.name).name)[0] or 'application/octet-stream'
+        response = FileResponse(file_handle, content_type=content_type)
+        response['X-Content-Type-Options'] = 'nosniff'
+        disposition = 'attachment' if request.query_params.get('download') == '1' else 'inline'
+        response['Content-Disposition'] = f'{disposition}; filename="{Path(evidence.name).name}"'
+        response['Cache-Control'] = 'private, no-store'
+        return response
 
     def retrieve(self, request, *args, **kwargs):
         """
@@ -89,79 +144,114 @@ class ComplaintViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
-        complaint = serializer.save(**kwargs)
+        storage_name = None
+        try:
+            with transaction.atomic():
+                complaint = serializer.save(**kwargs)
+                if complaint.evidence_file:
+                    storage_name = complaint.evidence_file.name
 
-        # ── Spam Detection ───────────────────────────────────────────────────
-        # Flag if same contact submits 3+ complaints within 24 hours
-        window_start = timezone.now() - timedelta(hours=24)
-        contact = complaint.complainant_contact or ""
-        if contact:
-            recent_count = Complaint.objects.filter(
-                complainant_contact__iexact=contact,
-                created_at__gte=window_start
-            ).exclude(pk=complaint.pk).count()
-            if recent_count >= 2:  # 2 previous + this one = 3 total
-                complaint.is_flagged_spam = True
-                complaint.spam_reason = (
-                    f"Auto-flagged: {recent_count + 1} submissions from "
-                    f"'{contact}' within 24 hours."
-                )
-                complaint.save(update_fields=['is_flagged_spam', 'spam_reason'])
-        elif complaint.complainant:
-            recent_count = Complaint.objects.filter(
-                complainant=complaint.complainant,
-                created_at__gte=window_start
-            ).exclude(pk=complaint.pk).count()
-            if recent_count >= 2:
-                complaint.is_flagged_spam = True
-                complaint.spam_reason = (
-                    f"Auto-flagged: {recent_count + 1} submissions from the "
-                    f"same account within 24 hours."
-                )
-                complaint.save(update_fields=['is_flagged_spam', 'spam_reason'])
-        # ─────────────────────────────────────────────────────────────────────
+                # ── Spam Detection ───────────────────────────────────────────
+                window_start = timezone.now() - timedelta(hours=24)
+                contact = complaint.complainant_contact or ""
+                if contact:
+                    recent_count = Complaint.objects.filter(
+                        complainant_contact__iexact=contact,
+                        created_at__gte=window_start
+                    ).exclude(pk=complaint.pk).count()
+                    if recent_count >= 2:
+                        complaint.is_flagged_spam = True
+                        complaint.spam_reason = (
+                            f"Auto-flagged: {recent_count + 1} submissions from "
+                            f"'{contact}' within 24 hours."
+                        )
+                        complaint.save(update_fields=['is_flagged_spam', 'spam_reason'])
+                elif complaint.complainant:
+                    recent_count = Complaint.objects.filter(
+                        complainant=complaint.complainant,
+                        created_at__gte=window_start
+                    ).exclude(pk=complaint.pk).count()
+                    if recent_count >= 2:
+                        complaint.is_flagged_spam = True
+                        complaint.spam_reason = (
+                            f"Auto-flagged: {recent_count + 1} submissions from the "
+                            f"same account within 24 hours."
+                        )
+                        complaint.save(update_fields=['is_flagged_spam', 'spam_reason'])
 
-        category_display = dict(Complaint.CATEGORY_CHOICES).get(complaint.category, complaint.category)
+                category_display = dict(Complaint.CATEGORY_CHOICES).get(complaint.category, complaint.category)
+                admins = User.objects.filter(role='admin')
+                for admin in admins:
+                    Notification.objects.create(
+                        recipient=admin,
+                        notification_type=Notification.TYPE_INFO,
+                        title='New Complaint Filed',
+                        message=f'A new complaint ({complaint.complaint_number}) has been filed regarding {category_display}.',
+                        link='/admin/complaints'
+                    )
 
-        # Notify Administrators
-        admins = User.objects.filter(role='admin')
-        for admin in admins:
-            Notification.objects.create(
-                recipient=admin,
-                notification_type=Notification.TYPE_INFO,
-                title='New Complaint Filed',
-                message=f'A new complaint ({complaint.complaint_number}) has been filed regarding {category_display}.',
-                link='/admin/complaints'
+                if complaint.vendor and hasattr(complaint.vendor, 'user') and complaint.vendor.user:
+                    Notification.objects.create(
+                        recipient=complaint.vendor.user,
+                        notification_type=Notification.TYPE_WARNING,
+                        title='Complaint Filed Against Your Stall',
+                        message=(
+                            f'A new complaint ({complaint.complaint_number}) has been filed against your stall '
+                            f'regarding {category_display}. Please check the details.'
+                        ),
+                        link='/vendor/complaints'
+                    )
+        except Exception:
+            # Cloudinary uploads happen before the database row is committed.
+            # Compensate if this transaction rolls back after the asset upload.
+            if storage_name is None and serializer.instance and serializer.instance.evidence_file:
+                stored_file = serializer.instance.evidence_file
+                if getattr(stored_file, '_committed', False):
+                    storage_name = stored_file.name
+            if storage_name:
+                try:
+                    Complaint._meta.get_field('evidence_file').storage.delete(storage_name)
+                except Exception:
+                    logger.error('Failed to clean up complaint evidence after transaction rollback.')
+            raise
+
+
+    def _notify_complaint_status_change(self, complaint, old_status):
+        if old_status == complaint.status:
+            return
+
+        status_display = dict(Complaint.STATUS_CHOICES).get(complaint.status, complaint.status)
+        message = f'Complaint {complaint.complaint_number} status changed to {status_display}.'
+        recipients = {}
+        if complaint.complainant_id:
+            recipients[complaint.complainant_id] = (
+                complaint.complainant,
+                'Complaint Status Updated',
+                '/vendor/complaints' if complaint.complainant.role == 'vendor' else '/complaints',
+                Notification.TYPE_INFO,
+            )
+        if complaint.vendor_id and complaint.vendor and complaint.vendor.user_id:
+            recipients[complaint.vendor.user_id] = (
+                complaint.vendor.user,
+                'Complaint Against Stall Updated',
+                '/vendor/complaints',
+                Notification.TYPE_INFO,
             )
 
-        # Notify the Vendor that a complaint has been filed against them
-        if complaint.vendor and hasattr(complaint.vendor, 'user') and complaint.vendor.user:
+        for recipient, title, link, notification_type in recipients.values():
             Notification.objects.create(
-                recipient=complaint.vendor.user,
-                notification_type=Notification.TYPE_WARNING,
-                title='Complaint Filed Against Your Stall',
-                message=(
-                    f'A new complaint ({complaint.complaint_number}) has been filed against your stall '
-                    f'regarding {category_display}. Please check the details.'
-                ),
-                link='/vendor/complaints'
+                recipient=recipient,
+                notification_type=notification_type,
+                title=title,
+                message=message,
+                link=link,
             )
 
-        # ── SMS Notification to Admin (Semaphore) ────────────────────────────────
-        stall_info = complaint.stall.stall_number if complaint.stall else 'N/A'
-        contact_info = complaint.complainant_contact or (
-            complaint.complainant.get_full_name() if complaint.complainant else 'Anonymous'
-        )
-        spam_tag = ' [SPAM FLAGGED]' if complaint.is_flagged_spam else ''
-        sms_body = (
-            f"[e-Palengke]{spam_tag} New Complaint #{complaint.complaint_number}\n"
-            f"Category: {category_display}\n"
-            f"Stall: {stall_info}\n"
-            f"Contact: {contact_info}\n"
-            f"View: /admin/complaints"
-        )
-        notify_admins_sms(sms_body)
-        # ────────────────────────────────────────────────────────────────────
+    def perform_update(self, serializer):
+        old_status = serializer.instance.status
+        with transaction.atomic():
+            complaint = serializer.save()
+            self._notify_complaint_status_change(complaint, old_status)
 
     @action(detail=True, methods=['patch'], url_path='update-status')
     def update_status(self, request, pk=None):
@@ -174,33 +264,14 @@ class ComplaintViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Invalid status.'}, status=status.HTTP_400_BAD_REQUEST)
         
         old_status = complaint.status
-        complaint.status = new_status
-        complaint.resolution_notes = resolution_notes
-        if new_status == Complaint.STATUS_RESOLVED:
-            complaint.resolved_at = timezone.now()
-            complaint.resolved_by = request.user
-        complaint.save()
-
-        # Notify Consumer and Vendor if status changed
-        if old_status != new_status:
-            status_display = dict(Complaint.STATUS_CHOICES).get(new_status, new_status)
-            message = f'Complaint {complaint.complaint_number} status changed to {status_display}.'
-            if complaint.complainant:
-                Notification.objects.create(
-                    recipient=complaint.complainant,
-                    notification_type=Notification.TYPE_INFO,
-                    title='Complaint Status Updated',
-                    message=message,
-                    link='/consumer/complaints' if complaint.complainant.role == 'customer' else '/vendor/complaints'
-                )
-            if complaint.vendor and complaint.vendor.user:
-                Notification.objects.create(
-                    recipient=complaint.vendor.user,
-                    notification_type=Notification.TYPE_INFO,
-                    title='Complaint Against Stall Updated',
-                    message=message,
-                    link='/vendor/complaints'
-                )
+        with transaction.atomic():
+            complaint.status = new_status
+            complaint.resolution_notes = resolution_notes
+            if new_status == Complaint.STATUS_RESOLVED:
+                complaint.resolved_at = timezone.now()
+                complaint.resolved_by = request.user
+            complaint.save()
+            self._notify_complaint_status_change(complaint, old_status)
 
         return Response(ComplaintSerializer(complaint).data)
 

@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 from apps.documents.models import Document, DocumentPage, ComplianceSignal
 from apps.documents.services.ocr import extract_text_paddleocr
 from apps.documents.services.extraction import DocumentExtractionService
@@ -177,10 +178,17 @@ def process_uploaded_document(document_id):
         if auto_resubmit:
             document.status = Document.STATUS_RESUBMISSION
             document.review_notes = resubmit_reason
-            
-            # Notify Vendor
-            from apps.notifications.models import Notification
-            if document.vendor and document.vendor.user:
+        else:
+            document.status = Document.STATUS_PENDING
+
+        with transaction.atomic():
+            document.save(update_fields=[
+                'status', 'ocr_status', 'raw_ocr_text', 'detected_type',
+                'confidence_score', 'extracted_data', 'classification_metadata',
+                'validation_results', 'review_notes'
+            ])
+            if auto_resubmit and document.vendor and document.vendor.user:
+                from apps.notifications.models import Notification
                 Notification.objects.create(
                     recipient=document.vendor.user,
                     notification_type=Notification.TYPE_WARNING,
@@ -188,14 +196,6 @@ def process_uploaded_document(document_id):
                     message=resubmit_reason,
                     link="/vendor/documents"
                 )
-        else:
-            document.status = Document.STATUS_PENDING
-        
-        document.save(update_fields=[
-            'status', 'ocr_status', 'raw_ocr_text', 'detected_type',
-            'confidence_score', 'extracted_data', 'classification_metadata',
-            'validation_results', 'review_notes'
-        ])
         
     except Document.DoesNotExist:
         pass

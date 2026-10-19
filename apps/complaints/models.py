@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from apps.documents.storage import private_complaint_evidence_storage
 
 
 class Complaint(models.Model):
@@ -60,7 +61,12 @@ class Complaint(models.Model):
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER)
     subject = models.CharField(max_length=300)
     description = models.TextField()
-    evidence_file = models.FileField(upload_to='complaints/', null=True, blank=True)
+    evidence_file = models.FileField(
+        upload_to='complaints/',
+        storage=private_complaint_evidence_storage,
+        null=True,
+        blank=True,
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
     is_flagged_spam = models.BooleanField(default=False)
     spam_reason = models.CharField(max_length=300, blank=True)

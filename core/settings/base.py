@@ -102,6 +102,10 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'static'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+PRIVATE_DOCUMENT_ROOT = BASE_DIR / 'private_documents'
+DOCUMENT_STORAGE_BACKEND = env('DOCUMENT_STORAGE_BACKEND', 'local').strip().lower()
+DOCUMENT_PROCESSING_MODE = env('DOCUMENT_PROCESSING_MODE', 'manual').lower()
+DOCUMENT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'users.User'
@@ -110,10 +114,10 @@ CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.users.authentication.SetupGatedJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated',
+        'apps.users.permissions.PasswordSetupPermission',
     ),
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
     'PAGE_SIZE': 20,
@@ -124,12 +128,17 @@ REST_FRAMEWORK = {
     ],
 }
 
+# `manage.py test` uses an isolated local-storage runner so `.env` credentials
+# cannot cause ordinary automated tests to access live Cloudinary assets.
+TEST_RUNNER = 'core.test_runner.IsolatedStorageDiscoverRunner'
+
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'CHECK_REVOKE_TOKEN': True,
 }
 
 # -------------------------------------------------------
