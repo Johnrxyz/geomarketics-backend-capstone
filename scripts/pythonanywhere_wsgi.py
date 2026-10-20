@@ -1,37 +1,41 @@
-# This file contains the WSGI configuration required to serve your
-# Django application on PythonAnywhere.
-# 
-# Instructions:
-# 1. Open your PythonAnywhere Dashboard -> Web tab.
-# 2. Click on the WSGI configuration file link (usually /var/www/<username>_pythonanywhere_com_wsgi.py).
-# 3. Replace the entire contents of that file with the code below.
-# 4. Make sure to replace 'yourusername' with your actual PythonAnywhere username!
+"""PythonAnywhere WSGI entry point for the GeoMarketics pilot."""
 
 import os
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
 
-# 1. REPLACE 'yourusername' with your actual PythonAnywhere username below:
-USERNAME = 'yourusername'
-PROJECT_FOLDER = 'backend' # The folder containing your manage.py
+# Use the production checkout by default.
+# Allows isolated startup validation with a different project directory.
+PROJECT_ROOT = Path(
+    os.environ.get(
+        "GEOMARKETICS_PROJECT_ROOT",
+        "/home/geomarketics/geomarketics-backend-capstone",
+    )
+).resolve()
 
-# 2. Path to your project directory
-path = f'/home/{USERNAME}/{PROJECT_FOLDER}'
-if path not in sys.path:
-    sys.path.append(path)
+if not (PROJECT_ROOT / "manage.py").is_file():
+    raise RuntimeError("GeoMarketics project directory not found.")
 
-# 3. Load environment variables from .env file
-# PythonAnywhere doesn't load .env automatically, so we use python-dotenv
-env_path = os.path.join(path, '.env')
-if os.path.exists(env_path):
-    load_dotenv(env_path)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# 4. Use the production-safe pilot settings.
-# The required values are loaded from the private backend .env above or from
-# the PythonAnywhere process environment. Pilot settings fail closed when
-# SECRET_KEY, ALLOWED_HOSTS, or CORS_ALLOWED_ORIGINS are missing or invalid.
-os.environ['DJANGO_SETTINGS_MODULE'] = 'core.settings.pilot'
+# Load environment BEFORE importing Django or Cloudinary.
+load_dotenv(PROJECT_ROOT / ".env")
 
-# 5. Initialize the WSGI application
+os.environ["DJANGO_SETTINGS_MODULE"] = "core.settings.pilot"
+
+# PythonAnywhere requires the outbound proxy for Cloudinary.
+if os.environ.get("DOCUMENT_STORAGE_BACKEND", "").lower() == "cloudinary":
+    if not (os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY")):
+        raise RuntimeError("Cloudinary requires an HTTPS proxy on this host.")
+
+# Initialize Cloudinary's HTTP clients BEFORE Django loads models.
+from core.cloudinary_bootstrap import initialize_cloudinary_proxy
+
+initialize_cloudinary_proxy()
+
+# Start Django only after storage initialization is complete.
 from django.core.wsgi import get_wsgi_application
+
 application = get_wsgi_application()
