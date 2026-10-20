@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.views import TokenRefreshView
 from django.utils import timezone
 from django.contrib.auth.password_validation import validate_password
@@ -54,14 +55,19 @@ class SetupAwareTokenRefreshView(TokenRefreshView):
 
 
 class LogoutView(APIView):
+    # The refresh token itself is sufficient proof to revoke that session. This
+    # also permits logout after the short-lived access token has expired.
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
     def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
+            return Response({'detail': 'A refresh token is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            refresh_token = request.data.get('refresh')
-            if refresh_token:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-        except Exception:
-            pass
+            RefreshToken(refresh_token).blacklist()
+        except TokenError:
+            return Response({'detail': 'Invalid refresh token.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'detail': 'Logged out successfully.'})
 
 

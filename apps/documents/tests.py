@@ -289,8 +289,21 @@ class DocumentWorkflowTests(TestCase):
     def test_non_admin_cannot_review_and_vendor_cannot_edit_status(self):
         document = self._upload().data
         self.client.force_authenticate(self.vendor_user)
-        self.assertEqual(self.client.post(f"{self.url}{document['id']}/approve/", {}, format='json').status_code, status.HTTP_403_FORBIDDEN)
+        for action, payload in (
+            ('approve', {}),
+            ('reject', {'review_notes': 'Vendor must not review this document.'}),
+            ('request_resubmission', {'review_notes': 'Vendor must not request resubmission.'}),
+        ):
+            with self.subTest(action=action):
+                response = self.client.post(
+                    f"{self.url}{document['id']}/{action}/", payload, format='json',
+                )
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(self.client.patch(f"{self.url}{document['id']}/", {'status': 'approved'}, format='json').status_code, status.HTTP_403_FORBIDDEN)
+        persisted = Document.objects.get(pk=document['id'])
+        self.assertEqual(persisted.status, Document.STATUS_PENDING)
+        self.assertIsNone(persisted.reviewed_by)
+        self.assertEqual(persisted.review_history.count(), 0)
         self.client.force_authenticate(self.customer)
         self.assertEqual(self.client.post(self.url, {'document_type': Document.TYPE_BUSINESS_PERMIT, 'title': 'forbidden'}, format='multipart').status_code, status.HTTP_403_FORBIDDEN)
 
