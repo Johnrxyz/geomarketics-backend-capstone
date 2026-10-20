@@ -1,9 +1,16 @@
 """Focused validation tests for the production-safe pilot settings."""
 
+from importlib import import_module
+from io import BytesIO
+import os
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from urllib3 import ProxyManager
+
 from django.core.exceptions import ImproperlyConfigured
 from django.conf import settings
 from django.test import SimpleTestCase
-import os
 
 from ._pilot_validation import (
     parse_allowed_hosts,
@@ -96,3 +103,61 @@ class TestStorageIsolationTests(SimpleTestCase):
         self.assertEqual(os.environ.get('CLOUDINARY_CLOUD_NAME'), '')
         self.assertEqual(os.environ.get('CLOUDINARY_API_KEY'), '')
         self.assertEqual(os.environ.get('CLOUDINARY_API_SECRET'), '')
+
+
+class CloudinaryProxyBootstrapTests(SimpleTestCase):
+    def test_already_imported_upload_and_admin_clients_use_configured_proxy(self):
+        import cloudinary
+
+        # Import both SDK modules before proxy setup to reproduce the stale
+        # module-level PoolManager that caused direct connections in WSGI.
+        uploader = import_module('cloudinary.uploader')
+        admin_api = import_module('cloudinary.api_client.call_api')
+        original_proxy = cloudinary.config().api_proxy
+        original_upload_http = uploader._http
+        original_admin_http = admin_api._http
+        proxy_url = 'http://proxy.synthetic.test:3128'
+
+        try:
+            from core.cloudinary_bootstrap import initialize_cloudinary_proxy
+
+            with patch.dict(os.environ, {'CLOUDINARY_API_PROXY': proxy_url}):
+                self.assertTrue(initialize_cloudinary_proxy())
+
+            # These are the exact connectors used by uploader.upload/destroy
+            # and cloudinary.api.resource, not a config-only assertion.
+            for sdk_client in (uploader, admin_api):
+                self.assertIsInstance(sdk_client._http, ProxyManager)
+                self.assertEqual(str(sdk_client._http.proxy), proxy_url)
+
+            # Exercise the SDK's upload/destroy request path while trapping
+            # the connector request. The project test runner intentionally
+            # disables the convenience upload/destroy methods globally.
+            response = SimpleNamespace(data=b'{}', headers={}, status=200)
+            with patch.object(uploader._http, 'request', return_value=response) as request:
+                uploader.call_api(
+                    'upload',
+                    {'public_id': 'proxy-bootstrap-test'},
+                    file=BytesIO(b'synthetic test payload'),
+                    resource_type='image',
+                    type='authenticated',
+                    cloud_name='synthetic-cloud',
+                    api_key='synthetic-key',
+                    api_secret='synthetic-secret',
+                )
+                uploader.call_api(
+                    'destroy',
+                    {'public_id': 'proxy-bootstrap-test'},
+                    resource_type='image',
+                    type='authenticated',
+                    cloud_name='synthetic-cloud',
+                    api_key='synthetic-key',
+                    api_secret='synthetic-secret',
+                )
+            self.assertEqual(request.call_count, 2)
+            self.assertTrue(all(call.kwargs['url'].startswith('https://api.cloudinary.com/')
+                                for call in request.call_args_list))
+        finally:
+            cloudinary.config(api_proxy=original_proxy)
+            uploader._http = original_upload_http
+            admin_api._http = original_admin_http
